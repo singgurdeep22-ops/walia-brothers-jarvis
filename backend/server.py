@@ -753,6 +753,9 @@ async def get_settings():
         }
         await db.settings.insert_one(default_settings)
         return default_settings
+    # Remove MongoDB _id to avoid serialization issues
+    if "_id" in settings:
+        del settings["_id"]
     return settings
 
 @api_router.put("/settings")
