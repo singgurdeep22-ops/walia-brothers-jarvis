@@ -74,8 +74,7 @@ export default function DashboardScreen() {
     fetchData();
   }, [fetchData]);
 
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem('isLoggedIn');
+  const handleLogout = () => {
     router.replace('/');
   };
 
