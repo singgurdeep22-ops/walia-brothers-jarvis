@@ -383,7 +383,8 @@ async def get_complaint_whatsapp_link(complaint_id: str):
         raise HTTPException(status_code=404, detail="Complaint not found")
     
     brand = complaint.get("brand", "")
-    service_number = BRAND_SERVICE_NUMBERS.get(brand, "9180001234")
+    # Get WhatsApp number from database
+    service_number = await get_brand_whatsapp_number(brand)
     
     message = f"""Service Complaint from Walia Brothers Electronics
 Customer: {complaint.get('customer_name', 'N/A')}
@@ -398,7 +399,7 @@ Issue: {complaint.get('issue_description', 'N/A')}"""
     encoded_message = urllib.parse.quote(message)
     whatsapp_link = f"https://wa.me/91{service_number}?text={encoded_message}"
     
-    return {"whatsapp_link": whatsapp_link, "service_number": service_number}
+    return {"whatsapp_link": whatsapp_link, "service_number": service_number, "brand": brand}
 
 # ============ CAMPAIGN ROUTES ============
 
