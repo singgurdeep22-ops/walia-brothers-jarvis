@@ -15,9 +15,10 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://retail-crm-assistant.preview.emergentagent.com';
 
 export default function LoginScreen() {
+  console.log('API_URL:', API_URL);
   const router = useRouter();
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
