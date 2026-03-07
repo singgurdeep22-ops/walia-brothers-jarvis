@@ -185,7 +185,7 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     Alert.alert(
       'Logout',
       'Are you sure you want to logout?',
@@ -194,8 +194,7 @@ export default function SettingsScreen() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.removeItem('isLoggedIn');
+          onPress: () => {
             router.replace('/');
           },
         },
