@@ -170,8 +170,20 @@ class StaffCreate(BaseModel):
     phone: Optional[str] = ""
     role: Optional[str] = "Technician"
 
-# Brand service numbers for WhatsApp deep linking
-BRAND_SERVICE_NUMBERS = {
+class BrandWhatsApp(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    brand_name: str
+    whatsapp_number: str
+    description: Optional[str] = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class BrandWhatsAppCreate(BaseModel):
+    brand_name: str
+    whatsapp_number: str
+    description: Optional[str] = ""
+
+# Default brand service numbers for WhatsApp deep linking
+DEFAULT_BRAND_SERVICE_NUMBERS = {
     "LG": "9188005644",
     "Samsung": "9180001234",
     "Sony": "9180001234",
