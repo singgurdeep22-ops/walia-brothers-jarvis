@@ -49,10 +49,24 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
+      console.log('Attempting login to:', `${API_URL}/api/auth/verify-pin?pin=${pin}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      
       const response = await fetch(`${API_URL}/api/auth/verify-pin?pin=${pin}`, {
         method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
+      
+      clearTimeout(timeoutId);
+      console.log('Response status:', response.status);
+      
       const data = await response.json();
+      console.log('Response data:', data);
 
       if (response.ok && data.success) {
         await AsyncStorage.setItem('isLoggedIn', 'true');
@@ -60,8 +74,13 @@ export default function LoginScreen() {
       } else {
         Alert.alert('Error', data.detail || 'Invalid PIN');
       }
-    } catch (error) {
-      Alert.alert('Error', 'Unable to connect to server');
+    } catch (error: any) {
+      console.log('Login error:', error);
+      if (error.name === 'AbortError') {
+        Alert.alert('Connection Timeout', 'Server is taking too long to respond. Please check your internet connection and try again.');
+      } else {
+        Alert.alert('Connection Error', `Unable to connect to server. Please check your internet connection.\n\nDetails: ${error.message || 'Unknown error'}`);
+      }
     } finally {
       setLoading(false);
     }
