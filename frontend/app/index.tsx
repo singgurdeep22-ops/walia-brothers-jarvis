@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://retail-crm-assistant.preview.emergentagent.com';
 
@@ -22,24 +21,6 @@ export default function LoginScreen() {
   const router = useRouter();
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
-
-  useEffect(() => {
-    checkExistingAuth();
-  }, []);
-
-  const checkExistingAuth = async () => {
-    try {
-      const isLoggedIn = await AsyncStorage.getItem('isLoggedIn');
-      if (isLoggedIn === 'true') {
-        router.replace('/dashboard');
-      }
-    } catch (error) {
-      console.log('Auth check error:', error);
-    } finally {
-      setCheckingAuth(false);
-    }
-  };
 
   const handleLogin = async () => {
     if (pin.length < 4) {
@@ -52,7 +33,7 @@ export default function LoginScreen() {
       console.log('Attempting login to:', `${API_URL}/api/auth/verify-pin?pin=${pin}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
       
       const response = await fetch(`${API_URL}/api/auth/verify-pin?pin=${pin}`, {
         method: 'POST',
@@ -69,7 +50,7 @@ export default function LoginScreen() {
       console.log('Response data:', data);
 
       if (response.ok && data.success) {
-        await AsyncStorage.setItem('isLoggedIn', 'true');
+        // Navigate to dashboard on successful login
         router.replace('/dashboard');
       } else {
         Alert.alert('Error', data.detail || 'Invalid PIN');
@@ -77,22 +58,14 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.log('Login error:', error);
       if (error.name === 'AbortError') {
-        Alert.alert('Connection Timeout', 'Server is taking too long to respond. Please check your internet connection and try again.');
+        Alert.alert('Connection Timeout', 'Server is taking too long. Please try again.');
       } else {
-        Alert.alert('Connection Error', `Unable to connect to server. Please check your internet connection.\n\nDetails: ${error.message || 'Unknown error'}`);
+        Alert.alert('Connection Error', 'Unable to connect. Please check your internet.');
       }
     } finally {
       setLoading(false);
     }
   };
-
-  if (checkingAuth) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-      </View>
-    );
-  }
 
   return (
     <SafeAreaView style={styles.container}>
