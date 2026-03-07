@@ -475,6 +475,38 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
   },
+  brandLinkCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16213e',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#25D36640',
+  },
+  brandLinkIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#25D36620',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  brandLinkContent: {
+    flex: 1,
+  },
+  brandLinkTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  brandLinkSubtitle: {
+    color: '#25D366',
+    fontSize: 12,
+    marginTop: 4,
+  },
   section: {
     backgroundColor: '#16213e',
     borderRadius: 16,
