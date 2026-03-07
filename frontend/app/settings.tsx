@@ -225,6 +225,21 @@ export default function SettingsScreen() {
         style={styles.content}
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* Brand WhatsApp Numbers - Quick Access */}
+          <TouchableOpacity
+            style={styles.brandLinkCard}
+            onPress={() => router.push('/brands')}
+          >
+            <View style={styles.brandLinkIcon}>
+              <Ionicons name="logo-whatsapp" size={28} color="#25D366" />
+            </View>
+            <View style={styles.brandLinkContent}>
+              <Text style={styles.brandLinkTitle}>Brand WhatsApp Numbers</Text>
+              <Text style={styles.brandLinkSubtitle}>Manage service center contacts for complaints</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={24} color="#666" />
+          </TouchableOpacity>
+
           {/* Store Settings */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Store Settings</Text>
