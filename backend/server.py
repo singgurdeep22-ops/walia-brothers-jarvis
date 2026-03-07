@@ -495,6 +495,64 @@ async def delete_staff(staff_id: str):
         raise HTTPException(status_code=404, detail="Staff not found")
     return {"success": True, "message": "Staff deleted"}
 
+# ============ BRAND WHATSAPP ROUTES ============
+
+@api_router.post("/brands", response_model=BrandWhatsApp)
+async def create_brand_whatsapp(input: BrandWhatsAppCreate):
+    """Add a brand with its WhatsApp service number"""
+    # Check if brand already exists
+    existing = await db.brand_whatsapp.find_one({"brand_name": {"$regex": f"^{input.brand_name}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail="Brand already exists. Please update instead.")
+    
+    brand = BrandWhatsApp(**input.dict())
+    await db.brand_whatsapp.insert_one(brand.dict())
+    return brand
+
+@api_router.get("/brands", response_model=List[BrandWhatsApp])
+async def get_brands():
+    """Get all brands with WhatsApp numbers"""
+    brands = await db.brand_whatsapp.find().to_list(100)
+    
+    # If no brands in DB, initialize with defaults
+    if not brands:
+        for brand_name, number in DEFAULT_BRAND_SERVICE_NUMBERS.items():
+            brand = BrandWhatsApp(brand_name=brand_name, whatsapp_number=number)
+            await db.brand_whatsapp.insert_one(brand.dict())
+        brands = await db.brand_whatsapp.find().to_list(100)
+    
+    return [BrandWhatsApp(**b) for b in brands]
+
+@api_router.put("/brands/{brand_id}")
+async def update_brand_whatsapp(brand_id: str, whatsapp_number: str, description: Optional[str] = None):
+    """Update a brand's WhatsApp number"""
+    update_data = {"whatsapp_number": whatsapp_number}
+    if description is not None:
+        update_data["description"] = description
+    
+    result = await db.brand_whatsapp.update_one({"id": brand_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Brand not found")
+    
+    brand = await db.brand_whatsapp.find_one({"id": brand_id})
+    return BrandWhatsApp(**brand)
+
+@api_router.delete("/brands/{brand_id}")
+async def delete_brand_whatsapp(brand_id: str):
+    """Delete a brand"""
+    result = await db.brand_whatsapp.delete_one({"id": brand_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Brand not found")
+    return {"success": True, "message": "Brand deleted"}
+
+async def get_brand_whatsapp_number(brand_name: str) -> str:
+    """Helper function to get WhatsApp number for a brand"""
+    brand = await db.brand_whatsapp.find_one({"brand_name": {"$regex": f"^{brand_name}$", "$options": "i"}})
+    if brand:
+        return brand.get("whatsapp_number", "9180001234")
+    # Fallback to defaults
+    return DEFAULT_BRAND_SERVICE_NUMBERS.get(brand_name, "9180001234")
+
 # ============ EXCEL IMPORT/EXPORT ============
 
 @api_router.post("/import/customers")
