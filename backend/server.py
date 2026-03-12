@@ -624,6 +624,218 @@ async def get_brand_whatsapp_number(brand_name: str) -> str:
     # Fallback to defaults
     return DEFAULT_BRAND_SERVICE_NUMBERS.get(brand_name, "9180001234")
 
+# ============ PRODUCTS (AI TRAINING) ============
+
+@api_router.post("/products", response_model=Product)
+async def create_product(input: ProductCreate):
+    """Add a product for AI to know about"""
+    product = Product(**input.dict())
+    await db.products.insert_one(product.dict())
+    return product
+
+@api_router.get("/products", response_model=List[Product])
+async def get_products(category: Optional[str] = None, brand: Optional[str] = None, in_stock: Optional[bool] = None):
+    """Get all products"""
+    query = {}
+    if category:
+        query["category"] = {"$regex": category, "$options": "i"}
+    if brand:
+        query["brand"] = {"$regex": brand, "$options": "i"}
+    if in_stock is not None:
+        query["in_stock"] = in_stock
+    
+    products = await db.products.find(query).to_list(500)
+    return [Product(**p) for p in products]
+
+@api_router.put("/products/{product_id}")
+async def update_product(product_id: str, input: ProductCreate):
+    """Update a product"""
+    result = await db.products.update_one({"id": product_id}, {"$set": input.dict()})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Product not found")
+    product = await db.products.find_one({"id": product_id})
+    return Product(**product)
+
+@api_router.delete("/products/{product_id}")
+async def delete_product(product_id: str):
+    """Delete a product"""
+    result = await db.products.delete_one({"id": product_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"success": True, "message": "Product deleted"}
+
+# ============ STORE INFO (AI TRAINING) ============
+
+@api_router.post("/store-info", response_model=StoreInfo)
+async def create_store_info(input: StoreInfoCreate):
+    """Add store information for AI"""
+    info = StoreInfo(**input.dict())
+    await db.store_info.insert_one(info.dict())
+    return info
+
+@api_router.get("/store-info")
+async def get_store_info(info_type: Optional[str] = None):
+    """Get store information"""
+    query = {"is_active": True}
+    if info_type:
+        query["info_type"] = info_type
+    
+    info_list = await db.store_info.find(query).to_list(100)
+    return [StoreInfo(**i) for i in info_list]
+
+@api_router.put("/store-info/{info_id}")
+async def update_store_info(info_id: str, title: Optional[str] = None, content: Optional[str] = None, is_active: Optional[bool] = None):
+    """Update store info"""
+    update_data = {}
+    if title:
+        update_data["title"] = title
+    if content:
+        update_data["content"] = content
+    if is_active is not None:
+        update_data["is_active"] = is_active
+    
+    result = await db.store_info.update_one({"id": info_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Store info not found")
+    return {"success": True}
+
+@api_router.delete("/store-info/{info_id}")
+async def delete_store_info(info_id: str):
+    """Delete store info"""
+    result = await db.store_info.delete_one({"id": info_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Store info not found")
+    return {"success": True, "message": "Store info deleted"}
+
+# ============ WORKFLOW RULES ============
+
+@api_router.post("/workflow-rules", response_model=WorkflowRule)
+async def create_workflow_rule(input: WorkflowRuleCreate):
+    """Add a workflow rule for AI"""
+    rule = WorkflowRule(**input.dict())
+    await db.workflow_rules.insert_one(rule.dict())
+    return rule
+
+@api_router.get("/workflow-rules")
+async def get_workflow_rules():
+    """Get all workflow rules"""
+    rules = await db.workflow_rules.find().to_list(100)
+    return [WorkflowRule(**r) for r in rules]
+
+@api_router.put("/workflow-rules/{rule_id}")
+async def update_workflow_rule(rule_id: str, input: WorkflowRuleCreate):
+    """Update a workflow rule"""
+    result = await db.workflow_rules.update_one({"id": rule_id}, {"$set": input.dict()})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"success": True}
+
+@api_router.delete("/workflow-rules/{rule_id}")
+async def delete_workflow_rule(rule_id: str):
+    """Delete a workflow rule"""
+    result = await db.workflow_rules.delete_one({"id": rule_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"success": True, "message": "Rule deleted"}
+
+# ============ APPROVAL QUEUE ============
+
+@api_router.get("/approvals")
+async def get_pending_approvals():
+    """Get pending approval items"""
+    items = await db.approvals.find({"status": "pending"}).sort("created_at", -1).to_list(50)
+    return [ApprovalItem(**i) for i in items]
+
+@api_router.post("/approvals")
+async def create_approval_item(item_type: str, customer_name: str, customer_phone: str, details: dict, ai_response: str):
+    """Create an approval item (used by AI)"""
+    item = ApprovalItem(
+        item_type=item_type,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        details=details,
+        ai_response=ai_response
+    )
+    await db.approvals.insert_one(item.dict())
+    return item
+
+@api_router.put("/approvals/{item_id}/approve")
+async def approve_item(item_id: str, notes: Optional[str] = None):
+    """Approve an item and execute the action"""
+    item = await db.approvals.find_one({"id": item_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Approval item not found")
+    
+    # Execute the action based on type
+    if item.get("item_type") == "quote":
+        # Create lead from approved quote
+        lead_data = {
+            "customer_name": item.get("customer_name"),
+            "phone": item.get("customer_phone"),
+            "product_interested": item.get("details", {}).get("product", ""),
+            "budget_range": item.get("details", {}).get("quoted_price", ""),
+            "notes": f"Approved quote. {notes or ''}",
+            "status": "Contacted"
+        }
+        lead = Lead(**lead_data)
+        await db.leads.insert_one(lead.dict())
+    
+    elif item.get("item_type") == "complaint":
+        # Create complaint from approved item
+        complaint_data = {
+            "customer_phone": item.get("customer_phone"),
+            "customer_name": item.get("customer_name"),
+            "product_type": item.get("details", {}).get("product_type", ""),
+            "brand": item.get("details", {}).get("brand", ""),
+            "issue_description": item.get("details", {}).get("issue", ""),
+            "status": "Pending"
+        }
+        complaint = Complaint(**complaint_data)
+        await db.complaints.insert_one(complaint.dict())
+    
+    # Update approval status
+    await db.approvals.update_one(
+        {"id": item_id},
+        {"$set": {"status": "approved", "reviewed_at": datetime.utcnow(), "notes": notes}}
+    )
+    
+    return {"success": True, "message": "Item approved and action executed"}
+
+@api_router.put("/approvals/{item_id}/reject")
+async def reject_item(item_id: str, notes: Optional[str] = None):
+    """Reject an approval item"""
+    result = await db.approvals.update_one(
+        {"id": item_id},
+        {"$set": {"status": "rejected", "reviewed_at": datetime.utcnow(), "notes": notes}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Approval item not found")
+    return {"success": True, "message": "Item rejected"}
+
+# Helper function to get AI training data
+async def get_ai_training_context():
+    """Get all training data for AI"""
+    products = await db.products.find({"in_stock": True}).to_list(100)
+    store_info = await db.store_info.find({"is_active": True}).to_list(50)
+    workflow_rules = await db.workflow_rules.find({"is_active": True}).to_list(20)
+    
+    context = {
+        "products": products,
+        "store_info": {info.get("info_type"): [] for info in store_info},
+        "workflow_rules": workflow_rules
+    }
+    
+    for info in store_info:
+        info_type = info.get("info_type", "other")
+        if info_type not in context["store_info"]:
+            context["store_info"][info_type] = []
+        context["store_info"][info_type].append({
+            "title": info.get("title"),
+            "content": info.get("content")
+        })
+    
+    return context
+
 # ============ EXCEL IMPORT/EXPORT ============
 
 @api_router.post("/import/customers")
