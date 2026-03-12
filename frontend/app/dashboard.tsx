@@ -80,6 +80,7 @@ export default function DashboardScreen() {
 
   const menuItems: MenuItem[] = [
     { id: 'assistant', title: 'AI Assistant', icon: 'chatbubbles', route: '/customer-assistant', color: '#00BCD4' },
+    { id: 'training', title: 'AI Training', icon: 'school', route: '/ai-training', color: '#8BC34A' },
     { id: 'customers', title: 'Customers', icon: 'people', route: '/customers', color: '#4CAF50', badge: stats?.total_customers },
     { id: 'leads', title: 'Leads', icon: 'trending-up', route: '/leads', color: '#2196F3', badge: stats?.new_leads },
     { id: 'complaints', title: 'Complaints', icon: 'construct', route: '/complaints', color: '#FF9800', badge: stats?.pending_complaints },
