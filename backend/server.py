@@ -809,6 +809,264 @@ async def ai_suggestions():
     
     return {"suggestions": suggestions}
 
+# ============ AI CUSTOMER ASSISTANT ============
+
+class CustomerChatMessage(BaseModel):
+    message: str
+    customer_name: Optional[str] = ""
+    customer_phone: Optional[str] = ""
+    session_id: Optional[str] = ""
+
+class CustomerChatResponse(BaseModel):
+    response: str
+    action_taken: Optional[str] = None
+    lead_created: Optional[dict] = None
+    complaint_created: Optional[dict] = None
+    needs_info: Optional[List[str]] = None
+
+# Store conversation context
+customer_sessions = {}
+
+@api_router.post("/ai/customer-chat", response_model=CustomerChatResponse)
+async def customer_chat(input: CustomerChatMessage):
+    """AI Customer Assistant - Handles customer inquiries, creates leads and complaints"""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI features not configured")
+    
+    session_id = input.session_id or str(uuid.uuid4())
+    
+    # Get or create session context
+    if session_id not in customer_sessions:
+        customer_sessions[session_id] = {
+            "customer_name": input.customer_name,
+            "customer_phone": input.customer_phone,
+            "conversation": [],
+            "intent": None,
+            "collected_info": {}
+        }
+    
+    session = customer_sessions[session_id]
+    
+    # Update session with any new info
+    if input.customer_name:
+        session["customer_name"] = input.customer_name
+    if input.customer_phone:
+        session["customer_phone"] = input.customer_phone
+    
+    # Add message to conversation
+    session["conversation"].append({"role": "customer", "message": input.message})
+    
+    # Get available products/brands for context
+    brands_list = await db.brand_whatsapp.find().to_list(20)
+    available_brands = [b.get("brand_name") for b in brands_list]
+    
+    system_prompt = f"""You are a helpful customer service assistant for Walia Brothers Electronics Store in Punjab, India.
+
+STORE INFO:
+- We sell TVs, ACs, Refrigerators, Washing Machines, Microwaves and other electronics
+- Brands available: {', '.join(available_brands) if available_brands else 'LG, Samsung, Sony, Whirlpool, Panasonic, Haier, Lloyd, Blue Star, Voltas'}
+- We provide sales, service, and installation
+
+YOUR TASKS:
+1. Greet customers warmly (can use Hindi/Punjabi phrases like "Sat Sri Akal", "Namaste")
+2. Understand if customer wants to:
+   - BUY a product → Collect: name, phone, product interest, budget → CREATE LEAD
+   - COMPLAIN about a product → Collect: name, phone, product type, brand, issue → CREATE COMPLAINT
+   - ASK general questions → Answer helpfully
+
+RESPONSE FORMAT:
+Always respond in this JSON format:
+{{
+    "reply": "Your friendly response to customer",
+    "intent": "inquiry" or "complaint" or "general" or "greeting",
+    "ready_to_create": true or false,
+    "missing_info": ["list of missing required fields"],
+    "collected_data": {{
+        "customer_name": "if mentioned",
+        "customer_phone": "if mentioned",
+        "product_interested": "if buying",
+        "brand": "if mentioned",
+        "budget": "if mentioned",
+        "product_type": "if complaint",
+        "issue_description": "if complaint",
+        "city": "if mentioned"
+    }}
+}}
+
+RULES:
+- Be warm, friendly, and professional
+- For leads: Need at minimum - name, phone, product interest
+- For complaints: Need at minimum - name, phone, product type, brand, issue description
+- Ask for missing info naturally in conversation
+- When you have all required info, set ready_to_create to true
+- Keep responses concise but helpful
+
+Current customer info:
+- Name: {session.get('customer_name') or 'Not provided yet'}
+- Phone: {session.get('customer_phone') or 'Not provided yet'}
+- Previously collected: {session.get('collected_info', {})}
+
+Conversation so far:
+{chr(10).join([f"{'Customer' if m['role']=='customer' else 'Assistant'}: {m['message']}" for m in session['conversation'][-5:]])}
+"""
+    
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"customer-{session_id}",
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        response_text = await chat.send_message(UserMessage(text=input.message))
+        
+        # Parse the AI response
+        import json
+        try:
+            # Try to extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                ai_response = json.loads(json_match.group())
+            else:
+                ai_response = {"reply": response_text, "intent": "general", "ready_to_create": False}
+        except json.JSONDecodeError:
+            ai_response = {"reply": response_text, "intent": "general", "ready_to_create": False}
+        
+        reply = ai_response.get("reply", response_text)
+        intent = ai_response.get("intent", "general")
+        ready_to_create = ai_response.get("ready_to_create", False)
+        collected_data = ai_response.get("collected_data", {})
+        missing_info = ai_response.get("missing_info", [])
+        
+        # Update session with collected data
+        session["intent"] = intent
+        for key, value in collected_data.items():
+            if value and value != "Not provided yet":
+                session["collected_info"][key] = value
+        
+        # Add assistant response to conversation
+        session["conversation"].append({"role": "assistant", "message": reply})
+        
+        response = CustomerChatResponse(
+            response=reply,
+            action_taken=None,
+            lead_created=None,
+            complaint_created=None,
+            needs_info=missing_info if missing_info else None
+        )
+        
+        # Create lead or complaint if ready
+        if ready_to_create:
+            info = session["collected_info"]
+            
+            if intent == "inquiry" and info.get("customer_name") and info.get("customer_phone") and info.get("product_interested"):
+                # Create Lead
+                lead_data = {
+                    "customer_name": info.get("customer_name"),
+                    "phone": info.get("customer_phone"),
+                    "city": info.get("city", ""),
+                    "product_interested": info.get("product_interested"),
+                    "model_number": info.get("model_number", ""),
+                    "budget_range": info.get("budget", ""),
+                    "notes": f"Created by AI Assistant. Conversation summary: Customer inquired about {info.get('product_interested')}",
+                    "status": "New"
+                }
+                lead = Lead(**lead_data)
+                await db.leads.insert_one(lead.dict())
+                
+                response.action_taken = "lead_created"
+                response.lead_created = {"id": lead.id, "customer_name": lead.customer_name, "product": lead.product_interested}
+                
+                # Notify message
+                response.response = reply + f"\n\n✅ I've recorded your interest! Our team will contact you shortly with the best deals on {info.get('product_interested')}."
+                
+            elif intent == "complaint" and info.get("customer_name") and info.get("customer_phone") and info.get("product_type") and info.get("brand") and info.get("issue_description"):
+                # Create Complaint
+                complaint_data = {
+                    "customer_phone": info.get("customer_phone"),
+                    "customer_name": info.get("customer_name"),
+                    "product_type": info.get("product_type"),
+                    "brand": info.get("brand"),
+                    "purchase_date": info.get("purchase_date", ""),
+                    "product_size": info.get("product_size", ""),
+                    "issue_description": info.get("issue_description"),
+                    "status": "Pending"
+                }
+                complaint = Complaint(**complaint_data)
+                await db.complaints.insert_one(complaint.dict())
+                
+                response.action_taken = "complaint_created"
+                response.complaint_created = {"id": complaint.id, "customer_name": complaint.customer_name, "brand": complaint.brand, "issue": complaint.issue_description}
+                
+                response.response = reply + f"\n\n✅ Your complaint has been registered! Our service team will contact you soon regarding your {info.get('brand')} {info.get('product_type')} issue."
+        
+        return response
+        
+    except Exception as e:
+        logging.error(f"Customer chat error: {str(e)}")
+        return CustomerChatResponse(
+            response="I apologize, but I'm having trouble processing your request. Please call our store directly or try again.",
+            action_taken=None
+        )
+
+@api_router.get("/ai/customer-sessions")
+async def get_customer_sessions():
+    """Get list of active customer chat sessions with their status"""
+    sessions_list = []
+    for session_id, session in customer_sessions.items():
+        sessions_list.append({
+            "session_id": session_id,
+            "customer_name": session.get("customer_name", "Unknown"),
+            "customer_phone": session.get("customer_phone", ""),
+            "intent": session.get("intent", "unknown"),
+            "message_count": len(session.get("conversation", [])),
+            "collected_info": session.get("collected_info", {})
+        })
+    return {"sessions": sessions_list}
+
+@api_router.delete("/ai/customer-sessions/{session_id}")
+async def clear_customer_session(session_id: str):
+    """Clear a customer chat session"""
+    if session_id in customer_sessions:
+        del customer_sessions[session_id]
+        return {"success": True, "message": "Session cleared"}
+    raise HTTPException(status_code=404, detail="Session not found")
+
+# ============ NOTIFICATIONS ============
+
+@api_router.get("/notifications")
+async def get_notifications():
+    """Get pending notifications for store owner"""
+    notifications = []
+    
+    # New leads
+    new_leads = await db.leads.find({"status": "New"}).sort("created_at", -1).limit(5).to_list(5)
+    for lead in new_leads:
+        notifications.append({
+            "type": "new_lead",
+            "title": f"New Lead: {lead.get('customer_name')}",
+            "message": f"Interested in {lead.get('product_interested')}",
+            "phone": lead.get("phone"),
+            "id": lead.get("id"),
+            "created_at": lead.get("created_at")
+        })
+    
+    # Pending complaints
+    pending = await db.complaints.find({"status": "Pending"}).sort("created_at", -1).limit(5).to_list(5)
+    for complaint in pending:
+        notifications.append({
+            "type": "pending_complaint",
+            "title": f"Complaint: {complaint.get('customer_name', complaint.get('customer_phone'))}",
+            "message": f"{complaint.get('brand')} {complaint.get('product_type')} - {complaint.get('issue_description')[:50]}...",
+            "phone": complaint.get("customer_phone"),
+            "id": complaint.get("id"),
+            "created_at": complaint.get("created_at")
+        })
+    
+    # Sort by created_at
+    notifications.sort(key=lambda x: x.get("created_at", datetime.min), reverse=True)
+    
+    return {"notifications": notifications[:10], "total_new_leads": len(new_leads), "total_pending_complaints": len(pending)}
+
 # ============ SETTINGS ============
 
 @api_router.get("/settings")
