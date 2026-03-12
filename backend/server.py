@@ -182,6 +182,76 @@ class BrandWhatsAppCreate(BaseModel):
     whatsapp_number: str
     description: Optional[str] = ""
 
+# ============ AI TRAINING MODELS ============
+
+class Product(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    category: str  # TV, AC, Refrigerator, Washing Machine, etc.
+    brand: str
+    model_number: Optional[str] = ""
+    base_price: float
+    min_price: float  # Minimum negotiable price
+    max_discount_percent: float = 10.0
+    features: Optional[str] = ""
+    in_stock: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ProductCreate(BaseModel):
+    name: str
+    category: str
+    brand: str
+    model_number: Optional[str] = ""
+    base_price: float
+    min_price: float
+    max_discount_percent: Optional[float] = 10.0
+    features: Optional[str] = ""
+    in_stock: Optional[bool] = True
+
+class StoreInfo(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    info_type: str  # delivery_area, payment_option, warranty, faq, workflow
+    title: str
+    content: str
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class StoreInfoCreate(BaseModel):
+    info_type: str
+    title: str
+    content: str
+    is_active: Optional[bool] = True
+
+class ApprovalItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    item_type: str  # quote, lead, complaint
+    customer_name: str
+    customer_phone: str
+    details: dict
+    ai_response: str
+    status: str = "pending"  # pending, approved, rejected
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    reviewed_at: Optional[datetime] = None
+    notes: Optional[str] = ""
+
+class WorkflowRule(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    rule_name: str
+    trigger: str  # e.g., "customer_asks_price", "customer_complaint", "customer_wants_delivery"
+    action: str  # e.g., "ask_approval", "auto_respond", "create_lead"
+    response_template: Optional[str] = ""
+    requires_approval: bool = True
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class WorkflowRuleCreate(BaseModel):
+    rule_name: str
+    trigger: str
+    action: str
+    response_template: Optional[str] = ""
+    requires_approval: Optional[bool] = True
+    is_active: Optional[bool] = True
+
 # Default brand service numbers for WhatsApp deep linking
 DEFAULT_BRAND_SERVICE_NUMBERS = {
     "LG": "9188005644",
