@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -12,7 +12,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  Alert,
   Vibration,
   KeyboardAvoidingView,
   Platform,
@@ -49,21 +48,15 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  const [settings, setSettings] = useState({
+  const [settings] = useState({
     voiceEnabled: true,
-    voicePitch: 0.75, // Lower pitch for manly voice
-    voiceRate: 0.9,
+    voicePitch: 0.7, // Lower pitch for manly voice
+    voiceRate: 0.85,
   });
 
   useEffect(() => {
-    loadSettings();
-  }, []);
-
-  useEffect(() => {
     if (visible && messages.length === 0) {
-      // Add welcome when opened
       const welcomeMsg = "Yes Sir, how may I assist you?";
       setMessages([{ role: 'jarvis', content: welcomeMsg, timestamp: new Date() }]);
       if (settings.voiceEnabled) {
@@ -71,17 +64,6 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
       }
     }
   }, [visible]);
-
-  const loadSettings = async () => {
-    try {
-      const saved = await AsyncStorage.getItem('jarvis_voice_settings');
-      if (saved) {
-        setSettings(JSON.parse(saved));
-      }
-    } catch (e) {
-      console.log('Settings load error:', e);
-    }
-  };
 
   const speakText = async (text: string) => {
     if (!settings.voiceEnabled) return;
@@ -93,7 +75,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
     try {
       await Speech.speak(cleanText, {
         language: 'en-IN',
-        pitch: settings.voicePitch, // Lower pitch = deeper voice
+        pitch: settings.voicePitch,
         rate: settings.voiceRate,
         onDone: () => setIsSpeaking(false),
         onStopped: () => setIsSpeaking(false),
@@ -146,8 +128,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
           speakText(data.response);
         }
 
-        // Handle navigation actions
-        if (data.action === 'navigate' && data.navigate_to) {
+        if (data.navigate_to) {
           setTimeout(() => {
             onClose();
             router.push(data.navigate_to);
@@ -170,12 +151,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
     }
   };
 
-  const quickCommands = [
-    "Show leads",
-    "Update prices",
-    "Check complaints",
-    "Store stats",
-  ];
+  const quickCommands = ["Show leads", "Update prices", "Check complaints", "Store stats"];
 
   if (!visible) return null;
 
@@ -186,7 +162,6 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
         style={styles.modalOverlay}
       >
         <View style={styles.modalContainer}>
-          {/* Header */}
           <View style={styles.modalHeader}>
             <View style={styles.jarvisIconSmall}>
               <Ionicons name="hardware-chip" size={20} color="#00BCD4" />
@@ -207,7 +182,6 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
             </TouchableOpacity>
           </View>
 
-          {/* Messages */}
           <ScrollView
             ref={scrollViewRef}
             style={styles.messagesArea}
@@ -217,10 +191,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
             {messages.map((msg, idx) => (
               <View
                 key={idx}
-                style={[
-                  styles.msgBubble,
-                  msg.role === 'user' ? styles.userBubble : styles.jarvisBubble,
-                ]}
+                style={[styles.msgBubble, msg.role === 'user' ? styles.userBubble : styles.jarvisBubble]}
               >
                 {msg.role === 'jarvis' && (
                   <View style={styles.jarvisTag}>
@@ -245,7 +216,6 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
             )}
           </ScrollView>
 
-          {/* Quick Commands */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -253,19 +223,12 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
             contentContainerStyle={styles.quickCmdsContent}
           >
             {quickCommands.map((cmd, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.quickCmdChip}
-                onPress={() => {
-                  setMessage(cmd);
-                }}
-              >
+              <TouchableOpacity key={idx} style={styles.quickCmdChip} onPress={() => setMessage(cmd)}>
                 <Text style={styles.quickCmdText}>{cmd}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
-          {/* Input */}
           <View style={styles.inputArea}>
             <TextInput
               style={styles.input}
@@ -290,57 +253,32 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   );
 }
 
-// Floating Jarvis Button
-function FloatingJarvisButton({ onPress, pathname }: { onPress: () => void; pathname: string }) {
+export default function RootLayout() {
+  const pathname = usePathname();
+  const [jarvisOpen, setJarvisOpen] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const shouldShow = pathname !== '/' && pathname !== '/jarvis';
+
+  const openJarvis = () => setJarvisOpen(true);
+  const closeJarvis = () => setJarvisOpen(false);
+  
+  const speak = async (text: string) => {
+    await Speech.speak(text, { language: 'en-IN', pitch: 0.7, rate: 0.85 });
+  };
+
+  const showFab = pathname !== '/' && pathname !== '/jarvis';
 
   useEffect(() => {
-    if (shouldShow) {
+    if (showFab) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.1, duration: 1000, useNativeDriver: true }),
           Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
         ])
       ).start();
+    } else {
+      pulseAnim.setValue(1);
     }
-  }, [shouldShow]);
-
-  // Don't show on login or jarvis screen
-  if (!shouldShow) {
-    return null;
-  }
-
-  return (
-    <Animated.View style={[styles.fab, { transform: [{ scale: pulseAnim }] }]}>
-      <TouchableOpacity
-        style={styles.fabButton}
-        onPress={() => {
-          Vibration.vibrate(50);
-          onPress();
-        }}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="hardware-chip" size={28} color="#fff" />
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-
-export default function RootLayout() {
-  const pathname = usePathname();
-  const [jarvisOpen, setJarvisOpen] = useState(false);
-
-  const openJarvis = () => setJarvisOpen(true);
-  const closeJarvis = () => setJarvisOpen(false);
-  
-  const speak = async (text: string) => {
-    await Speech.speak(text, {
-      language: 'en-IN',
-      pitch: 0.75,
-      rate: 0.9,
-    });
-  };
+  }, [showFab]);
 
   return (
     <JarvisContext.Provider value={{ openJarvis, closeJarvis, isOpen: jarvisOpen, speak }}>
@@ -353,7 +291,23 @@ export default function RootLayout() {
             animation: 'slide_from_right',
           }}
         />
-        <FloatingJarvisButton onPress={openJarvis} pathname={pathname} />
+        
+        {/* Floating Jarvis Button */}
+        {showFab && (
+          <Animated.View style={[styles.fab, { transform: [{ scale: pulseAnim }] }]}>
+            <TouchableOpacity
+              style={styles.fabButton}
+              onPress={() => {
+                Vibration.vibrate(50);
+                openJarvis();
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="hardware-chip" size={28} color="#fff" />
+            </TouchableOpacity>
+          </Animated.View>
+        )}
+        
         <JarvisModal visible={jarvisOpen} onClose={closeJarvis} />
       </SafeAreaProvider>
     </JarvisContext.Provider>
@@ -374,10 +328,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#00BCD4',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#00BCD4',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
     elevation: 8,
   },
   modalOverlay: {
@@ -407,21 +357,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  modalTitle: {
-    color: '#00BCD4',
-    fontSize: 18,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-  },
-  modalSubtitle: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 2,
-  },
+  headerInfo: { flex: 1, marginLeft: 12 },
+  modalTitle: { color: '#00BCD4', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 },
+  modalSubtitle: { color: '#666', fontSize: 12, marginTop: 2 },
   stopBtn: {
     width: 32,
     height: 32,
@@ -431,27 +369,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 8,
   },
-  closeBtn: {
-    padding: 4,
-  },
-  messagesArea: {
-    flex: 1,
-    maxHeight: 300,
-  },
-  messagesContent: {
-    padding: 16,
-  },
-  msgBubble: {
-    maxWidth: '85%',
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 10,
-  },
-  userBubble: {
-    backgroundColor: '#1a237e',
-    alignSelf: 'flex-end',
-    borderBottomRightRadius: 4,
-  },
+  closeBtn: { padding: 4 },
+  messagesArea: { flex: 1, maxHeight: 300 },
+  messagesContent: { padding: 16 },
+  msgBubble: { maxWidth: '85%', borderRadius: 16, padding: 12, marginBottom: 10 },
+  userBubble: { backgroundColor: '#1a237e', alignSelf: 'flex-end', borderBottomRightRadius: 4 },
   jarvisBubble: {
     backgroundColor: '#0f1528',
     alignSelf: 'flex-start',
@@ -459,22 +381,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#00BCD430',
   },
-  jarvisTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 6,
-  },
-  jarvisTagText: {
-    color: '#00BCD4',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  msgText: {
-    color: '#fff',
-    fontSize: 14,
-    lineHeight: 20,
-  },
+  jarvisTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
+  jarvisTagText: { color: '#00BCD4', fontSize: 10, fontWeight: 'bold' },
+  msgText: { color: '#fff', fontSize: 14, lineHeight: 20 },
   actionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -486,10 +395,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignSelf: 'flex-start',
   },
-  actionText: {
-    color: '#4CAF50',
-    fontSize: 11,
-  },
+  actionText: { color: '#4CAF50', fontSize: 11 },
   loadingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -501,20 +407,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#00BCD430',
   },
-  loadingText: {
-    color: '#666',
-    fontSize: 13,
-  },
-  quickCmds: {
-    maxHeight: 44,
-    borderTopWidth: 1,
-    borderTopColor: '#1a1a2e',
-  },
-  quickCmdsContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-  },
+  loadingText: { color: '#666', fontSize: 13 },
+  quickCmds: { maxHeight: 44, borderTopWidth: 1, borderTopColor: '#1a1a2e' },
+  quickCmdsContent: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
   quickCmdChip: {
     backgroundColor: '#00BCD420',
     paddingHorizontal: 14,
@@ -524,10 +419,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#00BCD450',
   },
-  quickCmdText: {
-    color: '#00BCD4',
-    fontSize: 12,
-  },
+  quickCmdText: { color: '#00BCD4', fontSize: 12 },
   inputArea: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -555,7 +447,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendBtnDisabled: {
-    opacity: 0.5,
-  },
+  sendBtnDisabled: { opacity: 0.5 },
 });
