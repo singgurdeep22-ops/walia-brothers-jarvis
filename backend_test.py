@@ -12,7 +12,7 @@ from typing import Dict, Any, List
 import urllib.parse
 
 # Configuration
-BASE_URL = "https://retail-crm-assistant.preview.emergentagent.com/api"
+BASE_URL = "https://smart-store-ai-2.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 class APITester:
