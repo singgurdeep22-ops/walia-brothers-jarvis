@@ -321,50 +321,45 @@ export default function JarvisScreen() {
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/ai/jarvis-assistant`, {
+      // Use the command endpoint for full action execution
+      const response = await fetch(`${API_URL}/api/ai/jarvis-command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMessage,
-          context: 'store_owner',
+          command: userMessage,
         }),
       });
 
       let jarvisResponse = '';
+      let actionTaken = null;
+      let navigateTo = null;
       
       if (response.ok) {
         const data = await response.json();
         jarvisResponse = data.response;
-        
-        // Handle any actions
-        if (data.action) {
-          handleJarvisAction(data.action, data.action_data);
-        }
+        actionTaken = data.action;
+        navigateTo = data.navigate_to;
       } else {
-        // Fallback to general AI
-        const fallbackResponse = await fetch(`${API_URL}/api/ai/analyze`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: userMessage }),
-        });
-        
-        if (fallbackResponse.ok) {
-          const fallbackData = await fallbackResponse.json();
-          jarvisResponse = fallbackData.response || "I understand, Sir. Let me help you with that.";
-        } else {
-          jarvisResponse = "I apologize, Sir. I'm having trouble processing that request. Could you please try again?";
-        }
+        jarvisResponse = "I apologize, Sir. I'm having trouble processing that request. Could you please try again?";
       }
       
       setMessages(prev => [...prev, {
         role: 'jarvis',
         content: jarvisResponse,
         timestamp: new Date(),
+        action: actionTaken,
       }]);
 
       // Speak response if enabled
       if (settings.voiceEnabled) {
         speakText(jarvisResponse);
+      }
+
+      // Handle navigation
+      if (navigateTo) {
+        setTimeout(() => {
+          router.push(navigateTo);
+        }, 2000);
       }
       
     } catch (error) {
