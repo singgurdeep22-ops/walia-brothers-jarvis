@@ -63,8 +63,8 @@ export default function JarvisScreen() {
   const [settings, setSettings] = useState<JarvisSettings>({
     voiceEnabled: true,
     voiceLanguage: 'both',
-    voicePitch: 0.9,
-    voiceRate: 0.95,
+    voicePitch: 0.7, // Lower pitch for deep manly voice
+    voiceRate: 0.85,
   });
 
   // Load settings from storage
