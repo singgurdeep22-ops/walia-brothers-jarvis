@@ -293,20 +293,23 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
 // Floating Jarvis Button
 function FloatingJarvisButton({ onPress, pathname }: { onPress: () => void; pathname: string }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  
-  // Don't show on login or jarvis screen
-  if (pathname === '/' || pathname === '/jarvis') {
-    return null;
-  }
+  const shouldShow = pathname !== '/' && pathname !== '/jarvis';
 
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.1, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-      ])
-    ).start();
-  }, []);
+    if (shouldShow) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start();
+    }
+  }, [shouldShow]);
+
+  // Don't show on login or jarvis screen
+  if (!shouldShow) {
+    return null;
+  }
 
   return (
     <Animated.View style={[styles.fab, { transform: [{ scale: pulseAnim }] }]}>
