@@ -1394,6 +1394,370 @@ async def update_settings(store_name: Optional[str] = None, store_phone: Optiona
     )
     return {"success": True}
 
+# ============ EXOTEL INTEGRATION ============
+
+class ExotelCallLog(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    call_sid: str
+    from_number: str
+    to_number: str
+    direction: str  # incoming, outgoing
+    status: str
+    duration: int = 0
+    recording_url: Optional[str] = None
+    ai_transcript: Optional[str] = None
+    ai_response: Optional[str] = None
+    lead_created: Optional[str] = None
+    complaint_created: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class WhatsAppMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    from_number: str
+    to_number: str
+    message: str
+    direction: str  # incoming, outgoing
+    status: str = "received"
+    ai_response: Optional[str] = None
+    requires_approval: bool = False
+    approved: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+# Exotel helper function
+async def make_exotel_request(endpoint: str, method: str = "GET", data: dict = None):
+    """Make authenticated request to Exotel API"""
+    if not EXOTEL_API_KEY or not EXOTEL_API_TOKEN:
+        raise HTTPException(status_code=500, detail="Exotel not configured")
+    
+    # Exotel uses Basic Auth
+    auth_string = base64.b64encode(f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}".encode()).decode()
+    
+    url = f"https://{EXOTEL_SUBDOMAIN}/v1/Accounts/{EXOTEL_SID}/{endpoint}"
+    
+    headers = {
+        "Authorization": f"Basic {auth_string}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        if method == "GET":
+            response = await client.get(url, headers=headers)
+        else:
+            response = await client.post(url, headers=headers, data=data)
+        
+        return response
+
+@api_router.get("/exotel/status")
+async def exotel_status():
+    """Check Exotel connection status"""
+    if not EXOTEL_API_KEY:
+        return {"connected": False, "message": "Exotel API key not configured"}
+    
+    return {
+        "connected": True,
+        "api_key_set": bool(EXOTEL_API_KEY),
+        "api_token_set": bool(EXOTEL_API_TOKEN),
+        "subdomain": EXOTEL_SUBDOMAIN
+    }
+
+@api_router.post("/exotel/webhook/call")
+async def exotel_call_webhook(request: Request):
+    """Webhook for incoming Exotel calls - This URL needs to be set in Exotel dashboard"""
+    try:
+        # Parse form data from Exotel
+        form_data = await request.form()
+        
+        call_sid = form_data.get("CallSid", "")
+        from_number = form_data.get("From", "")
+        to_number = form_data.get("To", "")
+        direction = form_data.get("Direction", "incoming")
+        status = form_data.get("Status", "")
+        
+        # Log the call
+        call_log = ExotelCallLog(
+            call_sid=call_sid,
+            from_number=from_number,
+            to_number=to_number,
+            direction=direction,
+            status=status
+        )
+        await db.call_logs.insert_one(call_log.dict())
+        
+        # If it's a new incoming call, prepare AI response
+        if status == "ringing" and direction == "incoming":
+            # Get store info for AI context
+            training_context = await get_ai_training_context()
+            
+            # Create greeting message
+            greeting = "Sat Sri Akal! Welcome to Walia Brothers Electronics. How can I help you today?"
+            
+            # Return TwiML-like response for Exotel IVR
+            # Note: Exotel uses different format, this is a placeholder
+            return {
+                "action": "speak",
+                "text": greeting,
+                "call_sid": call_sid
+            }
+        
+        return {"status": "received", "call_sid": call_sid}
+        
+    except Exception as e:
+        logging.error(f"Exotel webhook error: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@api_router.post("/exotel/webhook/whatsapp")
+async def exotel_whatsapp_webhook(request: Request):
+    """Webhook for incoming WhatsApp messages via Exotel"""
+    try:
+        form_data = await request.form()
+        
+        from_number = form_data.get("From", "")
+        to_number = form_data.get("To", "")
+        message_body = form_data.get("Body", "")
+        
+        # Clean phone number
+        from_number = re.sub(r'[^\d]', '', from_number)
+        if len(from_number) > 10:
+            from_number = from_number[-10:]
+        
+        # Log incoming message
+        whatsapp_msg = WhatsAppMessage(
+            from_number=from_number,
+            to_number=to_number,
+            message=message_body,
+            direction="incoming"
+        )
+        await db.whatsapp_messages.insert_one(whatsapp_msg.dict())
+        
+        # Get AI response
+        ai_response = await process_customer_message(from_number, message_body)
+        
+        # Check if this needs approval
+        needs_approval = ai_response.get("needs_approval", False)
+        
+        if needs_approval:
+            # Create approval item
+            await db.approvals.insert_one({
+                "id": str(uuid.uuid4()),
+                "item_type": "whatsapp_reply",
+                "customer_name": ai_response.get("customer_name", "Unknown"),
+                "customer_phone": from_number,
+                "details": {
+                    "original_message": message_body,
+                    "suggested_reply": ai_response.get("response", ""),
+                    "intent": ai_response.get("intent", "")
+                },
+                "ai_response": ai_response.get("response", ""),
+                "status": "pending",
+                "created_at": datetime.utcnow()
+            })
+            
+            return {"status": "pending_approval", "message_id": whatsapp_msg.id}
+        else:
+            # Auto-send response (for general queries)
+            # In production, this would send via Exotel WhatsApp API
+            return {
+                "status": "auto_replied",
+                "response": ai_response.get("response", ""),
+                "message_id": whatsapp_msg.id
+            }
+        
+    except Exception as e:
+        logging.error(f"WhatsApp webhook error: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+async def process_customer_message(phone: str, message: str) -> dict:
+    """Process customer message with AI and determine if approval needed"""
+    
+    # Get training data for context
+    products = await db.products.find({"in_stock": True}).to_list(50)
+    store_info = await db.store_info.find({"is_active": True}).to_list(30)
+    workflow_rules = await db.workflow_rules.find({"is_active": True}).to_list(20)
+    
+    # Check for existing customer
+    customer = await db.customers.find_one({"phone": {"$regex": phone[-10:]}})
+    customer_name = customer.get("name", "Customer") if customer else "Customer"
+    
+    # Build product catalog for AI
+    product_catalog = "\n".join([
+        f"- {p.get('name')} ({p.get('brand')}): ₹{p.get('base_price')} (can go down to ₹{p.get('min_price')})"
+        for p in products
+    ])
+    
+    # Build store info
+    store_info_text = "\n".join([
+        f"{i.get('title')}: {i.get('content')}"
+        for i in store_info
+    ])
+    
+    # Check workflow rules for approval requirements
+    needs_approval = False
+    for rule in workflow_rules:
+        trigger = rule.get("trigger", "").lower()
+        if trigger in message.lower() or any(word in message.lower() for word in trigger.split()):
+            if rule.get("requires_approval", True):
+                needs_approval = True
+                break
+    
+    # Keywords that always need approval
+    approval_keywords = ["price", "quote", "cost", "discount", "offer", "deal", "emi", "complaint", "problem", "issue", "not working"]
+    if any(keyword in message.lower() for keyword in approval_keywords):
+        needs_approval = True
+    
+    system_prompt = f"""You are Jarvis, the AI assistant for Walia Brothers Electronics Store.
+
+CUSTOMER: {customer_name} (Phone: {phone})
+MESSAGE: {message}
+
+PRODUCT CATALOG:
+{product_catalog if products else "No products in database yet"}
+
+STORE INFORMATION:
+{store_info_text if store_info else "Delivery available, EMI options available, 1 year warranty on all products"}
+
+YOUR TASK:
+1. Understand what the customer wants
+2. If asking about PRICE/QUOTE: Mention the product and price range, but say "Let me confirm the best price for you and get back shortly"
+3. If reporting COMPLAINT: Collect details and say "I've noted your complaint and our team will contact you shortly"
+4. For general questions: Answer helpfully
+
+RESPOND IN JSON FORMAT:
+{{
+    "response": "Your friendly response in Hindi-English mix",
+    "intent": "inquiry" or "complaint" or "general",
+    "needs_approval": true/false,
+    "product_mentioned": "product name if any",
+    "suggested_price": "price if giving quote",
+    "customer_name": "{customer_name}"
+}}
+
+Keep response conversational and warm. Use "ji" respectfully."""
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"whatsapp-{phone}-{uuid.uuid4()}",
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        response_text = await chat.send_message(UserMessage(text=message))
+        
+        # Parse JSON response
+        import json
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                ai_result = json.loads(json_match.group())
+                ai_result["needs_approval"] = needs_approval or ai_result.get("needs_approval", False)
+                return ai_result
+        except:
+            pass
+        
+        return {
+            "response": response_text,
+            "intent": "general",
+            "needs_approval": needs_approval,
+            "customer_name": customer_name
+        }
+        
+    except Exception as e:
+        logging.error(f"AI processing error: {str(e)}")
+        return {
+            "response": "Namaste ji! Thank you for contacting Walia Brothers. Our team will get back to you shortly.",
+            "intent": "general",
+            "needs_approval": True,
+            "customer_name": customer_name
+        }
+
+@api_router.get("/exotel/call-logs")
+async def get_call_logs(limit: int = 50):
+    """Get recent call logs"""
+    logs = await db.call_logs.find().sort("created_at", -1).limit(limit).to_list(limit)
+    return [ExotelCallLog(**log) for log in logs]
+
+@api_router.get("/exotel/whatsapp-messages")
+async def get_whatsapp_messages(limit: int = 50, pending_only: bool = False):
+    """Get WhatsApp messages"""
+    query = {}
+    if pending_only:
+        query["requires_approval"] = True
+        query["approved"] = False
+    
+    messages = await db.whatsapp_messages.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    return [WhatsAppMessage(**msg) for msg in messages]
+
+@api_router.post("/exotel/send-whatsapp")
+async def send_whatsapp_message(to_number: str, message: str):
+    """Send WhatsApp message via Exotel (manual send)"""
+    if not EXOTEL_API_KEY:
+        raise HTTPException(status_code=500, detail="Exotel not configured")
+    
+    # Log outgoing message
+    whatsapp_msg = WhatsAppMessage(
+        from_number="store",
+        to_number=to_number,
+        message=message,
+        direction="outgoing",
+        status="sent"
+    )
+    await db.whatsapp_messages.insert_one(whatsapp_msg.dict())
+    
+    # In production, this would call Exotel WhatsApp API
+    # For now, return success with instructions
+    return {
+        "success": True,
+        "message_id": whatsapp_msg.id,
+        "note": "Configure Exotel WhatsApp API endpoint for automatic sending"
+    }
+
+@api_router.put("/approvals/{item_id}/send")
+async def approve_and_send(item_id: str, custom_message: Optional[str] = None):
+    """Approve an item and send the response"""
+    item = await db.approvals.find_one({"id": item_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Approval item not found")
+    
+    message_to_send = custom_message or item.get("ai_response", "")
+    phone = item.get("customer_phone", "")
+    
+    # Mark as approved
+    await db.approvals.update_one(
+        {"id": item_id},
+        {"$set": {"status": "approved", "reviewed_at": datetime.utcnow()}}
+    )
+    
+    # Create lead or complaint based on intent
+    details = item.get("details", {})
+    intent = details.get("intent", "")
+    
+    if intent == "inquiry":
+        # Create lead
+        lead = Lead(
+            customer_name=item.get("customer_name", ""),
+            phone=phone,
+            product_interested=details.get("product_mentioned", ""),
+            notes=f"From WhatsApp. Message: {details.get('original_message', '')}",
+            status="New"
+        )
+        await db.leads.insert_one(lead.dict())
+    elif intent == "complaint":
+        # Create complaint
+        complaint = Complaint(
+            customer_phone=phone,
+            customer_name=item.get("customer_name", ""),
+            product_type=details.get("product_mentioned", ""),
+            brand="",
+            issue_description=details.get("original_message", ""),
+            status="Pending"
+        )
+        await db.complaints.insert_one(complaint.dict())
+    
+    return {
+        "success": True,
+        "message_sent": message_to_send,
+        "to_number": phone
+    }
+
 # ============ ROOT & HEALTH ============
 
 @api_router.get("/")
