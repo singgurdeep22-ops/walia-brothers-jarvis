@@ -1294,6 +1294,219 @@ async def get_daily_brief():
         "product_demand": product_demand
     }
 
+# ============ JARVIS COMMAND EXECUTION ============
+
+class JarvisCommand(BaseModel):
+    command: str
+
+@api_router.post("/ai/jarvis-command")
+async def jarvis_execute_command(input: JarvisCommand):
+    """
+    Jarvis Command Executor - Can perform actions on the store
+    This is the brain that understands commands and executes them
+    """
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI not configured")
+    
+    command = input.command.lower()
+    
+    # Get current data for context
+    products = await db.products.find().to_list(100)
+    leads = await db.leads.find().sort("created_at", -1).limit(10).to_list(10)
+    complaints = await db.complaints.find({"status": "Pending"}).limit(10).to_list(10)
+    
+    products_info = "\n".join([
+        f"ID:{p.get('id')} | {p.get('name')} ({p.get('brand')}) | Base:₹{p.get('base_price')} | Min:₹{p.get('min_price')} | Stock:{p.get('in_stock')}"
+        for p in products
+    ])
+    
+    leads_info = "\n".join([
+        f"ID:{l.get('id')} | {l.get('customer_name')} | {l.get('phone')} | {l.get('product_interested')} | Status:{l.get('status')}"
+        for l in leads
+    ])
+    
+    complaints_info = "\n".join([
+        f"ID:{c.get('id')} | {c.get('customer_name', c.get('customer_phone'))} | {c.get('brand')} {c.get('product_type')} | {c.get('issue_description')[:30]}..."
+        for c in complaints
+    ])
+    
+    system_prompt = f"""You are JARVIS, a highly intelligent AI assistant for Walia Brothers Electronics Store owner.
+You can EXECUTE commands and make REAL changes to the store database.
+
+CURRENT INVENTORY:
+{products_info if products else "No products yet"}
+
+RECENT LEADS:
+{leads_info if leads else "No leads"}
+
+PENDING COMPLAINTS:
+{complaints_info if complaints else "No complaints"}
+
+AVAILABLE ACTIONS (respond with JSON):
+1. UPDATE_PRODUCT_PRICE: {{"action": "update_price", "product_id": "ID", "base_price": NUMBER, "min_price": NUMBER}}
+2. CREATE_LEAD: {{"action": "create_lead", "customer_name": "NAME", "phone": "NUMBER", "product_interested": "PRODUCT", "budget": "AMOUNT"}}
+3. UPDATE_LEAD_STATUS: {{"action": "update_lead", "lead_id": "ID", "status": "New/Contacted/Closed"}}
+4. CREATE_COMPLAINT: {{"action": "create_complaint", "customer_name": "NAME", "phone": "NUMBER", "brand": "BRAND", "product_type": "TYPE", "issue": "DESCRIPTION"}}
+5. UPDATE_COMPLAINT: {{"action": "update_complaint", "complaint_id": "ID", "status": "Pending/In Progress/Resolved"}}
+6. ADD_PRODUCT: {{"action": "add_product", "name": "NAME", "brand": "BRAND", "category": "CATEGORY", "base_price": NUMBER, "min_price": NUMBER}}
+7. TOGGLE_STOCK: {{"action": "toggle_stock", "product_id": "ID", "in_stock": true/false}}
+8. NAVIGATE: {{"action": "navigate", "navigate_to": "/leads" or "/complaints" or "/customers" or "/products" or "/ai-training"}}
+9. SHOW_DATA: {{"action": "show", "data_type": "leads/complaints/products/stats"}}
+
+RESPONSE FORMAT:
+{{
+    "response": "Your response to Sir explaining what you did",
+    "action": "action_name or null",
+    "action_data": {{...action parameters...}},
+    "navigate_to": "/screen_path or null"
+}}
+
+RULES:
+- Always address user as "Sir"
+- Confirm before making changes: "Sir, I'll update X to Y. Done."
+- If unclear, ask for clarification
+- Be efficient and professional like Iron Man's JARVIS
+- Use a deep, confident tone in responses
+"""
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"jarvis-cmd-{uuid.uuid4()}",
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        response_text = await chat.send_message(UserMessage(text=input.command))
+        
+        # Parse JSON response
+        import json
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                ai_response = json.loads(json_match.group())
+            else:
+                ai_response = {"response": response_text, "action": None}
+        except json.JSONDecodeError:
+            ai_response = {"response": response_text, "action": None}
+        
+        action = ai_response.get("action")
+        action_data = ai_response.get("action_data", {})
+        response_msg = ai_response.get("response", response_text)
+        navigate_to = ai_response.get("navigate_to")
+        
+        # EXECUTE THE ACTION
+        action_result = None
+        
+        if action == "update_price":
+            product_id = action_data.get("product_id")
+            base_price = action_data.get("base_price")
+            min_price = action_data.get("min_price")
+            
+            update_data = {}
+            if base_price is not None:
+                update_data["base_price"] = float(base_price)
+            if min_price is not None:
+                update_data["min_price"] = float(min_price)
+            
+            if product_id and update_data:
+                result = await db.products.update_one({"id": product_id}, {"$set": update_data})
+                if result.modified_count > 0:
+                    action_result = "price_updated"
+                    response_msg = f"Done Sir. I've updated the prices as requested."
+        
+        elif action == "create_lead":
+            lead_data = {
+                "customer_name": action_data.get("customer_name", ""),
+                "phone": action_data.get("phone", ""),
+                "product_interested": action_data.get("product_interested", ""),
+                "budget_range": action_data.get("budget", ""),
+                "status": "New",
+                "notes": "Created by Jarvis"
+            }
+            lead = Lead(**lead_data)
+            await db.leads.insert_one(lead.dict())
+            action_result = "lead_created"
+            response_msg = f"Done Sir. I've created a new lead for {lead_data['customer_name']}."
+        
+        elif action == "update_lead":
+            lead_id = action_data.get("lead_id")
+            status = action_data.get("status")
+            if lead_id and status:
+                await db.leads.update_one({"id": lead_id}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
+                action_result = "lead_updated"
+                response_msg = f"Done Sir. Lead status updated to {status}."
+        
+        elif action == "create_complaint":
+            complaint_data = {
+                "customer_name": action_data.get("customer_name", ""),
+                "customer_phone": action_data.get("phone", ""),
+                "brand": action_data.get("brand", ""),
+                "product_type": action_data.get("product_type", ""),
+                "issue_description": action_data.get("issue", ""),
+                "status": "Pending"
+            }
+            complaint = Complaint(**complaint_data)
+            await db.complaints.insert_one(complaint.dict())
+            action_result = "complaint_created"
+            response_msg = f"Done Sir. Complaint registered for {complaint_data['customer_name']}."
+        
+        elif action == "update_complaint":
+            complaint_id = action_data.get("complaint_id")
+            status = action_data.get("status")
+            if complaint_id and status:
+                await db.complaints.update_one({"id": complaint_id}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
+                action_result = "complaint_updated"
+                response_msg = f"Done Sir. Complaint status updated to {status}."
+        
+        elif action == "add_product":
+            product_data = {
+                "name": action_data.get("name", ""),
+                "brand": action_data.get("brand", ""),
+                "category": action_data.get("category", "Other"),
+                "base_price": float(action_data.get("base_price", 0)),
+                "min_price": float(action_data.get("min_price", 0)),
+                "in_stock": True
+            }
+            product = Product(**product_data)
+            await db.products.insert_one(product.dict())
+            action_result = "product_added"
+            response_msg = f"Done Sir. I've added {product_data['name']} to the inventory."
+        
+        elif action == "toggle_stock":
+            product_id = action_data.get("product_id")
+            in_stock = action_data.get("in_stock", True)
+            if product_id:
+                await db.products.update_one({"id": product_id}, {"$set": {"in_stock": in_stock}})
+                action_result = "stock_updated"
+                response_msg = f"Done Sir. Product is now {'in stock' if in_stock else 'out of stock'}."
+        
+        elif action == "show":
+            data_type = action_data.get("data_type", "")
+            if data_type == "leads":
+                navigate_to = "/leads"
+            elif data_type == "complaints":
+                navigate_to = "/complaints"
+            elif data_type == "products":
+                navigate_to = "/ai-training"
+            elif data_type == "stats":
+                navigate_to = "/dashboard"
+        
+        return {
+            "response": response_msg,
+            "action": action_result or action,
+            "action_data": action_data,
+            "navigate_to": navigate_to
+        }
+        
+    except Exception as e:
+        logging.error(f"Jarvis command error: {str(e)}")
+        return {
+            "response": "I apologize Sir, I encountered an issue processing that command. Please try again.",
+            "action": None,
+            "action_data": None,
+            "navigate_to": None
+        }
+
 # ============ AI CUSTOMER ASSISTANT ============
 
 class CustomerChatMessage(BaseModel):
