@@ -1,5 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Query
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Query, Request, Form
+from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,6 +7,8 @@ import os
 import logging
 import re
 import io
+import httpx
+import base64
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -27,6 +29,12 @@ db = client[os.environ['DB_NAME']]
 
 # LLM Key
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+
+# Exotel Configuration
+EXOTEL_API_KEY = os.environ.get('EXOTEL_API_KEY', '')
+EXOTEL_API_TOKEN = os.environ.get('EXOTEL_API_TOKEN', '')
+EXOTEL_SUBDOMAIN = os.environ.get('EXOTEL_SUBDOMAIN', 'api.exotel.com')
+EXOTEL_SID = EXOTEL_API_KEY  # SID is usually the API key
 
 # Create the main app
 app = FastAPI(title="Walia Brothers Jarvis - Store Assistant")
