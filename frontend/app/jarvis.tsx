@@ -397,9 +397,11 @@ export default function JarvisScreen() {
 
   const quickCommands = [
     { text: "Show pending tasks", icon: "list" },
-    { text: "New leads today", icon: "trending-up" },
+    { text: "Update product prices", icon: "pricetag" },
     { text: "Check complaints", icon: "construct" },
-    { text: "Approvals pending", icon: "shield-checkmark" },
+    { text: "Create new lead", icon: "person-add" },
+    { text: "Add new product", icon: "add-circle" },
+    { text: "Store stats", icon: "stats-chart" },
   ];
 
   return (
