@@ -79,7 +79,7 @@ export default function DashboardScreen() {
   };
 
   const menuItems: MenuItem[] = [
-    { id: 'assistant', title: 'AI Assistant', icon: 'chatbubbles', route: '/customer-assistant', color: '#00BCD4' },
+    { id: 'jarvis', title: 'JARVIS', icon: 'hardware-chip', route: '/jarvis', color: '#00BCD4' },
     { id: 'approvals', title: 'Approvals', icon: 'shield-checkmark', route: '/approvals', color: '#FF9800' },
     { id: 'training', title: 'AI Training', icon: 'school', route: '/ai-training', color: '#8BC34A' },
     { id: 'customers', title: 'Customers', icon: 'people', route: '/customers', color: '#4CAF50', badge: stats?.total_customers },
