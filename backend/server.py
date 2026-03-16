@@ -1099,6 +1099,201 @@ async def ai_suggestions():
     
     return {"suggestions": suggestions}
 
+# ============ PERSONAL JARVIS ASSISTANT ============
+
+class JarvisMessage(BaseModel):
+    message: str
+    context: Optional[str] = "store_owner"
+
+class JarvisResponse(BaseModel):
+    response: str
+    action: Optional[str] = None
+    action_data: Optional[dict] = None
+
+# Store owner context for personalized responses
+owner_context = {
+    "name": "Sir",
+    "vocabulary": [],
+    "preferences": {},
+    "conversation_history": []
+}
+
+@api_router.post("/ai/jarvis-assistant", response_model=JarvisResponse)
+async def jarvis_assistant(input: JarvisMessage):
+    """Personal Jarvis AI Assistant for Store Owner - Like Iron Man's Jarvis"""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI features not configured")
+    
+    # Get current store context
+    total_customers = await db.customers.count_documents({})
+    total_leads = await db.leads.count_documents({})
+    new_leads = await db.leads.count_documents({"status": "New"})
+    pending_complaints = await db.complaints.count_documents({"status": "Pending"})
+    pending_approvals = await db.approvals.count_documents({"status": "pending"})
+    
+    # Get recent leads
+    recent_leads = await db.leads.find().sort("created_at", -1).limit(5).to_list(5)
+    recent_leads_info = "\n".join([
+        f"- {l.get('customer_name')}: interested in {l.get('product_interested')} ({l.get('status')})"
+        for l in recent_leads
+    ])
+    
+    # Get pending complaints
+    pending_complaints_list = await db.complaints.find({"status": "Pending"}).limit(5).to_list(5)
+    complaints_info = "\n".join([
+        f"- {c.get('customer_name', c.get('customer_phone'))}: {c.get('brand')} {c.get('product_type')} - {c.get('issue_description')[:50]}..."
+        for c in pending_complaints_list
+    ])
+    
+    # Get products for context
+    products = await db.products.find({"in_stock": True}).to_list(20)
+    products_info = "\n".join([
+        f"- {p.get('name')} ({p.get('brand')}): ₹{p.get('base_price')} (min: ₹{p.get('min_price')})"
+        for p in products
+    ])
+    
+    system_prompt = f"""You are JARVIS, a highly intelligent personal AI assistant for the owner of Walia Brothers Electronics Store in Punjab, India. 
+Your personality is like Tony Stark's JARVIS - intelligent, helpful, formal yet warm, and always addresses the user as "Sir".
+
+STORE STATUS RIGHT NOW:
+- Total Customers: {total_customers}
+- Total Leads: {total_leads}
+- New Leads Pending Follow-up: {new_leads}
+- Pending Complaints: {pending_complaints}
+- AI Approvals Waiting: {pending_approvals}
+
+RECENT LEADS:
+{recent_leads_info if recent_leads else "No recent leads"}
+
+PENDING COMPLAINTS:
+{complaints_info if pending_complaints_list else "No pending complaints"}
+
+PRODUCTS IN INVENTORY:
+{products_info if products else "No products in database yet"}
+
+YOUR CAPABILITIES:
+1. Provide business insights and summaries
+2. Help manage leads and complaints
+3. Suggest marketing strategies
+4. Answer questions about store operations
+5. Navigate to different sections of the app
+6. Create leads and complaints on command
+
+RESPONSE GUIDELINES:
+- Always address user as "Sir"
+- Be professional yet warm like Iron Man's JARVIS
+- Keep responses concise but informative
+- Use Hindi phrases naturally when appropriate (e.g., "Ji Sir", "Bilkul Sir")
+- If asked to do something, confirm the action
+- For navigation requests, include action in response
+
+ACTIONS YOU CAN TRIGGER (include in JSON if needed):
+- navigate: {{"screen": "/leads"}} or "/complaints" or "/customers" or "/marketing" or "/approvals"
+- create_lead: Will navigate to leads screen
+- create_complaint: Will navigate to complaints screen
+
+Respond in this JSON format:
+{{
+    "response": "Your helpful response here",
+    "action": "action_name or null",
+    "action_data": {{"key": "value"}} or null
+}}
+"""
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"jarvis-owner-{uuid.uuid4()}",
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        response_text = await chat.send_message(UserMessage(text=input.message))
+        
+        # Parse JSON response
+        import json
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                ai_response = json.loads(json_match.group())
+                return JarvisResponse(
+                    response=ai_response.get("response", response_text),
+                    action=ai_response.get("action"),
+                    action_data=ai_response.get("action_data")
+                )
+        except json.JSONDecodeError:
+            pass
+        
+        return JarvisResponse(response=response_text)
+        
+    except Exception as e:
+        logging.error(f"Jarvis error: {str(e)}")
+        return JarvisResponse(
+            response="I apologize Sir, I'm experiencing a temporary issue. Please try again in a moment."
+        )
+
+@api_router.get("/ai/daily-brief")
+async def get_daily_brief():
+    """Get daily brief for store owner"""
+    total_customers = await db.customers.count_documents({})
+    total_leads = await db.leads.count_documents({})
+    new_leads = await db.leads.count_documents({"status": "New"})
+    pending_complaints = await db.complaints.count_documents({"status": "Pending"})
+    pending_approvals = await db.approvals.count_documents({"status": "pending"})
+    
+    # Get repeated complaints (same brand/product)
+    complaint_pipeline = [
+        {"$group": {"_id": {"brand": "$brand", "product_type": "$product_type"}, "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 3}
+    ]
+    repeated_complaints = await db.complaints.aggregate(complaint_pipeline).to_list(3)
+    
+    # Get product demand (from leads)
+    demand_pipeline = [
+        {"$group": {"_id": "$product_interested", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 5}
+    ]
+    product_demand = await db.leads.aggregate(demand_pipeline).to_list(5)
+    
+    critical_alerts = []
+    suggestions = []
+    
+    if pending_complaints > 3:
+        critical_alerts.append(f"{pending_complaints} complaints pending - customers waiting!")
+    if pending_approvals > 0:
+        critical_alerts.append(f"{pending_approvals} AI responses waiting for your approval")
+    if new_leads > 5:
+        critical_alerts.append(f"{new_leads} hot leads need immediate follow-up")
+    
+    for rc in repeated_complaints:
+        brand = rc["_id"].get("brand", "Unknown")
+        product = rc["_id"].get("product_type", "Unknown")
+        count = rc["count"]
+        suggestions.append(f"Multiple complaints ({count}) for {brand} {product} - consider contacting service center")
+    
+    for pd in product_demand:
+        product = pd["_id"]
+        count = pd["count"]
+        if count > 2:
+            suggestions.append(f"High demand for {product} ({count} inquiries) - ensure stock availability")
+    
+    if not suggestions:
+        suggestions.append("Business running smoothly - great time to plan promotions")
+    
+    return {
+        "total_customers": total_customers,
+        "total_leads": total_leads,
+        "new_leads": new_leads,
+        "pending_complaints": pending_complaints,
+        "pending_approvals": pending_approvals,
+        "critical_alerts": critical_alerts,
+        "suggestions": suggestions,
+        "repeated_complaints": repeated_complaints,
+        "product_demand": product_demand
+    }
+
 # ============ AI CUSTOMER ASSISTANT ============
 
 class CustomerChatMessage(BaseModel):
