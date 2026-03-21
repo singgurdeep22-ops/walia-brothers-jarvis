@@ -1724,6 +1724,13 @@ async def jarvis_execute_command(input: JarvisCommand):
         for c in complaints
     ]) if complaints else "No complaints"
     
+    # Get market trends/alerts
+    market_alerts = await db.market_alerts.find({"status": "pending_review"}).limit(5).to_list(5)
+    market_alerts_info = "\n".join([
+        f"⚠️ {a.get('trigger')}: {a.get('suggestion')} (Products: {', '.join(a.get('products', []))})"
+        for a in market_alerts
+    ]) if market_alerts else "No market alerts"
+    
     # Build conversation context
     conv_context = ""
     if conversation_history:
