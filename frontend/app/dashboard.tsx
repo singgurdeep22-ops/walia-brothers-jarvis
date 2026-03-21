@@ -246,6 +246,29 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#16213e',
   },
+  headerLeft: {
+    flex: 1,
+  },
+  weatherWidget: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a3e',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+    gap: 6,
+  },
+  weatherTemp: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  weatherCondition: {
+    color: '#aaa',
+    fontSize: 12,
+  },
   greeting: {
     color: '#aaa',
     fontSize: 14,
