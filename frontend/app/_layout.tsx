@@ -48,6 +48,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [sessionId] = useState('walia-store-owner'); // Unique session for sync
 
   const [settings] = useState({
     voiceEnabled: true,
@@ -55,15 +56,42 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
     voiceRate: 0.85,
   });
 
+  // Load synced conversation on mount
   useEffect(() => {
-    if (visible && messages.length === 0) {
-      const welcomeMsg = "Yes Sir, how may I assist you?";
-      setMessages([{ role: 'jarvis', content: welcomeMsg, timestamp: new Date() }]);
-      if (settings.voiceEnabled) {
-        speakText(welcomeMsg);
-      }
+    if (visible) {
+      loadSyncedConversation();
     }
   }, [visible]);
+
+  const loadSyncedConversation = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/jarvis/conversation/${sessionId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.messages && data.messages.length > 0) {
+          // Convert stored messages to display format
+          const displayMessages = data.messages.slice(-20).map((msg: any) => ({
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(msg.timestamp),
+            action: msg.action,
+          }));
+          setMessages(displayMessages);
+        } else {
+          // No history, show welcome
+          const welcomeMsg = "Yes Sir, how may I assist you? I'm synced across all your devices.";
+          setMessages([{ role: 'jarvis', content: welcomeMsg, timestamp: new Date() }]);
+          if (settings.voiceEnabled) {
+            speakText(welcomeMsg);
+          }
+        }
+      }
+    } catch (error) {
+      console.log('Error loading conversation:', error);
+      const welcomeMsg = "Yes Sir, how may I assist you?";
+      setMessages([{ role: 'jarvis', content: welcomeMsg, timestamp: new Date() }]);
+    }
+  };
 
   const speakText = async (text: string) => {
     if (!settings.voiceEnabled) return;
