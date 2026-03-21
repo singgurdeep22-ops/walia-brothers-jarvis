@@ -1072,6 +1072,194 @@ Provide concise, actionable insights. Keep responses under 200 words."""
         logging.error(f"AI analysis error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
+# ============ WEATHER & SMART MARKETING ============
+
+# Cache for weather data (refresh every 30 mins)
+weather_cache = {"data": None, "timestamp": None}
+
+@api_router.get("/weather")
+async def get_weather():
+    """Get live weather for Punjab, India (Ludhiana area)"""
+    import time
+    
+    # Check cache (30 min expiry)
+    if weather_cache["data"] and weather_cache["timestamp"]:
+        if time.time() - weather_cache["timestamp"] < 1800:  # 30 mins
+            return weather_cache["data"]
+    
+    try:
+        # Using Open-Meteo API (free, no key required)
+        # Ludhiana, Punjab coordinates: 30.9, 75.85
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": 30.9,
+                    "longitude": 75.85,
+                    "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+                    "timezone": "Asia/Kolkata",
+                    "forecast_days": 3
+                },
+                timeout=10.0
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                current = data.get("current", {})
+                daily = data.get("daily", {})
+                
+                # Weather code to description
+                weather_codes = {
+                    0: "Clear", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+                    45: "Foggy", 48: "Foggy", 51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
+                    61: "Light Rain", 63: "Rain", 65: "Heavy Rain", 71: "Light Snow", 73: "Snow",
+                    75: "Heavy Snow", 80: "Light Showers", 81: "Showers", 82: "Heavy Showers",
+                    95: "Thunderstorm", 96: "Thunderstorm with Hail", 99: "Severe Thunderstorm"
+                }
+                
+                weather_code = current.get("weather_code", 0)
+                condition = weather_codes.get(weather_code, "Unknown")
+                
+                weather_data = {
+                    "location": "Ludhiana, Punjab",
+                    "temperature": current.get("temperature_2m"),
+                    "humidity": current.get("relative_humidity_2m"),
+                    "wind_speed": current.get("wind_speed_10m"),
+                    "condition": condition,
+                    "weather_code": weather_code,
+                    "forecast": [
+                        {
+                            "day": daily.get("time", [])[i] if i < len(daily.get("time", [])) else None,
+                            "max_temp": daily.get("temperature_2m_max", [])[i] if i < len(daily.get("temperature_2m_max", [])) else None,
+                            "min_temp": daily.get("temperature_2m_min", [])[i] if i < len(daily.get("temperature_2m_min", [])) else None,
+                            "rain_chance": daily.get("precipitation_probability_max", [])[i] if i < len(daily.get("precipitation_probability_max", [])) else None,
+                        }
+                        for i in range(min(3, len(daily.get("time", []))))
+                    ],
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Cache the result
+                weather_cache["data"] = weather_data
+                weather_cache["timestamp"] = time.time()
+                
+                return weather_data
+    except Exception as e:
+        logging.error(f"Weather API error: {str(e)}")
+    
+    # Return fallback data
+    return {
+        "location": "Ludhiana, Punjab",
+        "temperature": 25,
+        "humidity": 60,
+        "condition": "Clear",
+        "weather_code": 0,
+        "forecast": [],
+        "timestamp": datetime.utcnow().isoformat(),
+        "fallback": True
+    }
+
+@api_router.get("/marketing/smart-suggestions")
+async def get_smart_marketing_suggestions():
+    """Get AI-powered marketing suggestions based on weather, trends, and inventory"""
+    
+    # Get weather
+    weather = await get_weather()
+    temp = weather.get("temperature", 25)
+    condition = weather.get("condition", "Clear")
+    rain_chance = weather.get("forecast", [{}])[0].get("rain_chance", 0) if weather.get("forecast") else 0
+    
+    # Get products
+    products = await db.products.find().to_list(100)
+    product_names = [p.get("name", "").lower() for p in products]
+    
+    # Get pending approvals (marketing tasks waiting)
+    pending_marketing = await db.marketing_suggestions.find({"status": "pending"}).to_list(50)
+    
+    suggestions = []
+    
+    # Weather-based suggestions
+    if temp > 35:  # Hot weather
+        suggestions.append({
+            "type": "weather",
+            "trigger": f"Hot weather ({temp}°C)",
+            "suggestion": "Perfect time to promote ACs, coolers, and refrigerators",
+            "products": ["Air Conditioner", "Cooler", "Refrigerator", "Fan"],
+            "action": "send_promotion",
+            "priority": "high"
+        })
+    elif temp < 15:  # Cold weather
+        suggestions.append({
+            "type": "weather",
+            "trigger": f"Cold weather ({temp}°C)",
+            "suggestion": "Promote room heaters, geysers, and washing machines with dryer",
+            "products": ["Room Heater", "Geyser", "Washer Dryer", "Oven", "Induction"],
+            "action": "send_promotion",
+            "priority": "high"
+        })
+    
+    if rain_chance and rain_chance > 60:  # Rainy weather expected
+        suggestions.append({
+            "type": "weather",
+            "trigger": f"Rain expected ({rain_chance}% chance)",
+            "suggestion": "Stock up and promote washing machines, dryers, and water heaters",
+            "products": ["Washing Machine", "Dryer", "Geyser"],
+            "action": "stock_alert",
+            "priority": "medium"
+        })
+    
+    if "fog" in condition.lower():
+        suggestions.append({
+            "type": "weather",
+            "trigger": "Foggy conditions",
+            "suggestion": "Good time to promote home appliances - people staying indoors",
+            "products": ["TV", "Home Theater", "Kitchen Appliances"],
+            "action": "send_promotion",
+            "priority": "medium"
+        })
+    
+    # Store in DB for Jarvis approval workflow
+    for suggestion in suggestions:
+        suggestion["id"] = str(uuid.uuid4())
+        suggestion["created_at"] = datetime.utcnow().isoformat()
+        suggestion["status"] = "pending_approval"
+    
+    if suggestions:
+        await db.marketing_suggestions.insert_many(suggestions)
+    
+    return {
+        "weather": weather,
+        "suggestions": suggestions,
+        "pending_count": len(pending_marketing) + len(suggestions)
+    }
+
+@api_router.get("/marketing/pending")
+async def get_pending_marketing():
+    """Get pending marketing suggestions awaiting approval"""
+    pending = await db.marketing_suggestions.find({"status": "pending_approval"}).to_list(50)
+    return {"pending": pending, "count": len(pending)}
+
+@api_router.post("/marketing/approve/{suggestion_id}")
+async def approve_marketing_suggestion(suggestion_id: str):
+    """Approve a marketing suggestion"""
+    result = await db.marketing_suggestions.update_one(
+        {"id": suggestion_id},
+        {"$set": {"status": "approved", "approved_at": datetime.utcnow().isoformat()}}
+    )
+    if result.modified_count > 0:
+        return {"message": "Marketing task approved", "id": suggestion_id}
+    raise HTTPException(status_code=404, detail="Suggestion not found")
+
+@api_router.post("/marketing/reject/{suggestion_id}")
+async def reject_marketing_suggestion(suggestion_id: str):
+    """Reject a marketing suggestion"""
+    await db.marketing_suggestions.update_one(
+        {"id": suggestion_id},
+        {"$set": {"status": "rejected", "rejected_at": datetime.utcnow().isoformat()}}
+    )
+    return {"message": "Marketing task rejected", "id": suggestion_id}
+
 @api_router.get("/ai/suggestions")
 async def ai_suggestions():
     """Get AI-powered business suggestions"""
