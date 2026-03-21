@@ -25,6 +25,14 @@ interface Stats {
   lead_status: Record<string, number>;
 }
 
+interface Weather {
+  location: string;
+  temperature: number;
+  humidity: number;
+  condition: string;
+  weather_code: number;
+}
+
 interface MenuItem {
   id: string;
   title: string;
@@ -37,15 +45,27 @@ interface MenuItem {
 export default function DashboardScreen() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [weather, setWeather] = useState<Weather | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const getWeatherIcon = (condition: string): keyof typeof Ionicons.glyphMap => {
+    const c = condition.toLowerCase();
+    if (c.includes('rain') || c.includes('drizzle') || c.includes('shower')) return 'rainy';
+    if (c.includes('cloud') || c.includes('overcast')) return 'cloudy';
+    if (c.includes('fog')) return 'cloud';
+    if (c.includes('thunder') || c.includes('storm')) return 'thunderstorm';
+    if (c.includes('snow')) return 'snow';
+    return 'sunny';
+  };
+
   const fetchData = useCallback(async () => {
     try {
-      const [statsRes, suggestionsRes] = await Promise.all([
+      const [statsRes, suggestionsRes, weatherRes] = await Promise.all([
         fetch(`${API_URL}/api/dashboard/stats`),
         fetch(`${API_URL}/api/ai/suggestions`),
+        fetch(`${API_URL}/api/weather`),
       ]);
 
       if (statsRes.ok) {
@@ -56,6 +76,11 @@ export default function DashboardScreen() {
       if (suggestionsRes.ok) {
         const suggestionsData = await suggestionsRes.json();
         setSuggestions(suggestionsData.suggestions || []);
+      }
+
+      if (weatherRes.ok) {
+        const weatherData = await weatherRes.json();
+        setWeather(weatherData);
       }
     } catch (error) {
       console.log('Fetch error:', error);
