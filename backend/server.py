@@ -9,11 +9,12 @@ import re
 import io
 import httpx
 import base64
+import feedparser
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
 import pandas as pd
 from openpyxl import Workbook
