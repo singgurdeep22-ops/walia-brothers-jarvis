@@ -1302,102 +1302,241 @@ class JarvisCommand(BaseModel):
 @api_router.post("/ai/jarvis-command")
 async def jarvis_execute_command(input: JarvisCommand):
     """
-    Jarvis Command Executor - Can perform actions on the store
-    This is the brain that understands commands and executes them
+    Jarvis Command Executor - Smart, decisive, action-oriented assistant
     """
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="AI not configured")
     
-    command = input.command.lower()
+    command = input.command.strip()
     
     # Get current data for context
     products = await db.products.find().to_list(100)
-    leads = await db.leads.find().sort("created_at", -1).limit(10).to_list(10)
-    complaints = await db.complaints.find({"status": "Pending"}).limit(10).to_list(10)
+    leads = await db.leads.find().sort("created_at", -1).limit(20).to_list(20)
+    complaints = await db.complaints.find().sort("created_at", -1).limit(20).to_list(20)
+    customers = await db.customers.find().limit(50).to_list(50)
+    
+    # Get stats
+    total_customers = await db.customers.count_documents({})
+    total_leads = await db.leads.count_documents({})
+    new_leads = await db.leads.count_documents({"status": "New"})
+    pending_complaints = await db.complaints.count_documents({"status": "Pending"})
     
     products_info = "\n".join([
-        f"ID:{p.get('id')} | {p.get('name')} ({p.get('brand')}) | Base:₹{p.get('base_price')} | Min:₹{p.get('min_price')} | Stock:{p.get('in_stock')}"
+        f"• {p.get('name')} ({p.get('brand')}) - Base: ₹{p.get('base_price')}, Min: ₹{p.get('min_price')}, ID: {p.get('id')}"
         for p in products
-    ])
+    ]) if products else "No products in inventory"
     
     leads_info = "\n".join([
-        f"ID:{l.get('id')} | {l.get('customer_name')} | {l.get('phone')} | {l.get('product_interested')} | Status:{l.get('status')}"
+        f"• {l.get('customer_name')} ({l.get('phone')}) - wants {l.get('product_interested')}, budget {l.get('budget_range')}, status: {l.get('status')}, ID: {l.get('id')}"
         for l in leads
-    ])
+    ]) if leads else "No leads"
     
     complaints_info = "\n".join([
-        f"ID:{c.get('id')} | {c.get('customer_name', c.get('customer_phone'))} | {c.get('brand')} {c.get('product_type')} | {c.get('issue_description')[:30]}..."
+        f"• {c.get('customer_name', 'Unknown')} ({c.get('customer_phone')}) - {c.get('brand')} {c.get('product_type')}: {c.get('issue_description', '')[:50]}..., status: {c.get('status')}, ID: {c.get('id')}"
         for c in complaints
-    ])
+    ]) if complaints else "No complaints"
     
-    system_prompt = f"""You are JARVIS, a highly intelligent AI assistant for Walia Brothers Electronics Store owner.
-You can EXECUTE commands and make REAL changes to the store database.
+    system_prompt = f"""You are JARVIS - Just A Rather Very Intelligent System. You are the personal AI assistant for the owner of Walia Brothers Electronics Store.
 
-CURRENT INVENTORY:
-{products_info if products else "No products yet"}
+CRITICAL: You are SMART, DECISIVE, and ACTION-ORIENTED. You DO things, you don't just talk about them.
 
-RECENT LEADS:
-{leads_info if leads else "No leads"}
+## YOUR PERSONALITY:
+- You are like Tony Stark's JARVIS - intelligent, witty, efficient
+- Always address the owner as "Sir"
+- Be brief but informative
+- Take action IMMEDIATELY when given a command
+- Never ask for unnecessary confirmations - just DO IT
+- Use Hindi phrases naturally: "Ji Sir", "Bilkul", "Ho gaya Sir"
 
-PENDING COMPLAINTS:
-{complaints_info if complaints else "No complaints"}
+## CURRENT STORE DATA:
 
-AVAILABLE ACTIONS (respond with JSON):
-1. UPDATE_PRODUCT_PRICE: {{"action": "update_price", "product_id": "ID", "base_price": NUMBER, "min_price": NUMBER}}
-2. CREATE_LEAD: {{"action": "create_lead", "customer_name": "NAME", "phone": "NUMBER", "product_interested": "PRODUCT", "budget": "AMOUNT"}}
-3. UPDATE_LEAD_STATUS: {{"action": "update_lead", "lead_id": "ID", "status": "New/Contacted/Closed"}}
-4. CREATE_COMPLAINT: {{"action": "create_complaint", "customer_name": "NAME", "phone": "NUMBER", "brand": "BRAND", "product_type": "TYPE", "issue": "DESCRIPTION"}}
-5. UPDATE_COMPLAINT: {{"action": "update_complaint", "complaint_id": "ID", "status": "Pending/In Progress/Resolved"}}
-6. ADD_PRODUCT: {{"action": "add_product", "name": "NAME", "brand": "BRAND", "category": "CATEGORY", "base_price": NUMBER, "min_price": NUMBER}}
-7. TOGGLE_STOCK: {{"action": "toggle_stock", "product_id": "ID", "in_stock": true/false}}
-8. NAVIGATE: {{"action": "navigate", "navigate_to": "/leads" or "/complaints" or "/customers" or "/products" or "/ai-training"}}
-9. SHOW_DATA: {{"action": "show", "data_type": "leads/complaints/products/stats"}}
+**Stats:** {total_customers} customers, {total_leads} leads ({new_leads} new), {pending_complaints} pending complaints
 
-RESPONSE FORMAT:
+**Products:**
+{products_info}
+
+**Recent Leads:**
+{leads_info}
+
+**Complaints:**
+{complaints_info}
+
+## ACTIONS YOU CAN TAKE (Always include action_data with required fields):
+
+1. **UPDATE PRICE** - When asked to change/update/set price for any product:
+   {{"action": "update_price", "action_data": {{"product_id": "THE_ID", "base_price": NUMBER, "min_price": NUMBER}}}}
+
+2. **CREATE LEAD** - When someone is interested in buying:
+   {{"action": "create_lead", "action_data": {{"customer_name": "NAME", "phone": "NUMBER", "product_interested": "PRODUCT", "budget": "AMOUNT"}}}}
+
+3. **CREATE COMPLAINT** - When there's a service issue:
+   {{"action": "create_complaint", "action_data": {{"customer_name": "NAME", "phone": "NUMBER", "brand": "BRAND", "product_type": "TYPE", "issue": "DESCRIPTION"}}}}
+
+4. **ADD PRODUCT** - When adding new inventory:
+   {{"action": "add_product", "action_data": {{"name": "FULL NAME", "brand": "BRAND", "category": "TV/AC/Washing Machine/Refrigerator/Other", "base_price": NUMBER, "min_price": NUMBER}}}}
+
+5. **UPDATE LEAD** - When changing lead status:
+   {{"action": "update_lead", "action_data": {{"lead_id": "ID", "status": "New/Contacted/Negotiating/Closed/Lost"}}}}
+
+6. **UPDATE COMPLAINT** - When changing complaint status:
+   {{"action": "update_complaint", "action_data": {{"complaint_id": "ID", "status": "Pending/In Progress/Resolved"}}}}
+
+7. **NAVIGATE** - When user wants to see a screen:
+   {{"action": "navigate", "navigate_to": "/leads" or "/complaints" or "/customers" or "/marketing" or "/ai-training" or "/dashboard"}}
+
+## RESPONSE FORMAT (ALWAYS use this JSON format):
+```json
 {{
-    "response": "Your response to Sir explaining what you did",
-    "action": "action_name or null",
-    "action_data": {{...action parameters...}},
-    "navigate_to": "/screen_path or null"
+    "response": "Brief confirmation of what you did or helpful answer",
+    "action": "action_name",
+    "action_data": {{}},
+    "navigate_to": null
 }}
+```
 
-RULES:
-- Always address user as "Sir"
-- Confirm before making changes: "Sir, I'll update X to Y. Done."
-- If unclear, ask for clarification
-- Be efficient and professional like Iron Man's JARVIS
-- Use a deep, confident tone in responses
-"""
+## SMART BEHAVIORS:
+
+1. **Price Updates**: If user says "TV price 50000" or "set TV to 50000" - FIND the TV product and update it immediately.
+
+2. **Partial Info**: If user gives partial info like "new lead Rahul wants AC", create the lead with available info, use "Not provided" for missing fields.
+
+3. **Questions**: For questions like "how many leads?" or "pending complaints?" - give direct answers with numbers.
+
+4. **Smart Matching**: Match product names loosely - "LG TV", "55 inch", "Smart TV" should all match "55 inch Smart TV LG".
+
+5. **Status Updates**: "Mark Rahul as contacted" - find the lead by name and update status.
+
+6. **Daily Summary**: For "what's pending?" or "status" - give a quick summary of important items.
+
+REMEMBER: You are SMART. You understand context. You take ACTION. You don't waste time with unnecessary questions."""
 
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
-            session_id=f"jarvis-cmd-{uuid.uuid4()}",
+            session_id=f"jarvis-smart-{uuid.uuid4()}",
             system_message=system_prompt
         ).with_model("openai", "gpt-4o")
         
-        response_text = await chat.send_message(UserMessage(text=input.command))
+        response_text = await chat.send_message(UserMessage(text=command))
         
         # Parse JSON response
         import json
+        ai_response = {"response": response_text, "action": None, "action_data": {}, "navigate_to": None}
+        
         try:
+            # Find JSON in response
             json_match = re.search(r'\{[\s\S]*\}', response_text)
             if json_match:
-                ai_response = json.loads(json_match.group())
-            else:
-                ai_response = {"response": response_text, "action": None}
+                parsed = json.loads(json_match.group())
+                ai_response = {
+                    "response": parsed.get("response", response_text),
+                    "action": parsed.get("action"),
+                    "action_data": parsed.get("action_data", {}),
+                    "navigate_to": parsed.get("navigate_to")
+                }
         except json.JSONDecodeError:
-            ai_response = {"response": response_text, "action": None}
+            # If JSON parsing fails, use raw response
+            pass
         
         action = ai_response.get("action")
-        action_data = ai_response.get("action_data", {})
-        response_msg = ai_response.get("response", response_text)
+        action_data = ai_response.get("action_data") or {}
+        response_msg = ai_response.get("response", "Done Sir.")
         navigate_to = ai_response.get("navigate_to")
         
         # EXECUTE THE ACTION
         action_result = None
         
         if action == "update_price":
+            product_id = action_data.get("product_id")
+            base_price = action_data.get("base_price")
+            min_price = action_data.get("min_price")
+            
+            if product_id:
+                update_data = {}
+                if base_price is not None:
+                    update_data["base_price"] = float(base_price)
+                if min_price is not None:
+                    update_data["min_price"] = float(min_price)
+                
+                if update_data:
+                    result = await db.products.update_one({"id": product_id}, {"$set": update_data})
+                    if result.modified_count > 0:
+                        action_result = "price_updated"
+        
+        elif action == "create_lead":
+            lead_data = {
+                "customer_name": action_data.get("customer_name", "Unknown"),
+                "phone": action_data.get("phone", "Not provided"),
+                "product_interested": action_data.get("product_interested", "General inquiry"),
+                "budget_range": action_data.get("budget", "Not specified"),
+                "status": "New",
+                "notes": "Created by Jarvis",
+                "city": action_data.get("city", "")
+            }
+            lead = Lead(**lead_data)
+            await db.leads.insert_one(lead.dict())
+            action_result = "lead_created"
+        
+        elif action == "update_lead":
+            lead_id = action_data.get("lead_id")
+            status = action_data.get("status")
+            if lead_id and status:
+                await db.leads.update_one({"id": lead_id}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
+                action_result = "lead_updated"
+        
+        elif action == "create_complaint":
+            complaint_data = {
+                "customer_name": action_data.get("customer_name", "Unknown"),
+                "customer_phone": action_data.get("phone", "Not provided"),
+                "brand": action_data.get("brand", "Unknown"),
+                "product_type": action_data.get("product_type", "Unknown"),
+                "issue_description": action_data.get("issue", "Service required"),
+                "status": "Pending"
+            }
+            complaint = Complaint(**complaint_data)
+            await db.complaints.insert_one(complaint.dict())
+            action_result = "complaint_created"
+        
+        elif action == "update_complaint":
+            complaint_id = action_data.get("complaint_id")
+            status = action_data.get("status")
+            if complaint_id and status:
+                await db.complaints.update_one({"id": complaint_id}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
+                action_result = "complaint_updated"
+        
+        elif action == "add_product":
+            product_data = {
+                "name": action_data.get("name", "New Product"),
+                "brand": action_data.get("brand", "Generic"),
+                "category": action_data.get("category", "Other"),
+                "base_price": float(action_data.get("base_price", 0)),
+                "min_price": float(action_data.get("min_price", action_data.get("base_price", 0))),
+                "max_discount": action_data.get("max_discount", 10),
+                "description": action_data.get("description", ""),
+                "in_stock": True
+            }
+            product = Product(**product_data)
+            await db.products.insert_one(product.dict())
+            action_result = "product_added"
+        
+        elif action == "navigate":
+            action_result = "navigating"
+        
+        return {
+            "response": response_msg,
+            "action": action_result or action,
+            "action_data": action_data,
+            "navigate_to": navigate_to
+        }
+        
+    except Exception as e:
+        logging.error(f"Jarvis error: {str(e)}")
+        return {
+            "response": f"Sir, I encountered an issue: {str(e)[:100]}. Please try again.",
+            "action": None,
+            "action_data": None,
+            "navigate_to": None
+        }
             product_id = action_data.get("product_id")
             base_price = action_data.get("base_price")
             min_price = action_data.get("min_price")
