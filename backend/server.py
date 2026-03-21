@@ -1634,11 +1634,29 @@ REMEMBER: You are SMART. You understand context. You take ACTION. You don't wast
         elif action == "navigate":
             action_result = "navigating"
         
+        # Save conversation to database for sync across devices
+        new_messages = [
+            {"role": "user", "content": command, "timestamp": datetime.utcnow().isoformat()},
+            {"role": "jarvis", "content": response_msg, "timestamp": datetime.utcnow().isoformat(), "action": action_result}
+        ]
+        
+        await db.jarvis_conversations.update_one(
+            {"session_id": session_id},
+            {
+                "$push": {"messages": {"$each": new_messages}},
+                "$set": {"updated_at": datetime.utcnow()},
+                "$setOnInsert": {"created_at": datetime.utcnow()}
+            },
+            upsert=True
+        )
+        
         return {
             "response": response_msg,
             "action": action_result or action,
             "action_data": action_data,
-            "navigate_to": navigate_to
+            "navigate_to": navigate_to,
+            "session_id": session_id,
+            "synced": True
         }
         
     except Exception as e:
