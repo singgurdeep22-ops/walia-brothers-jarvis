@@ -1189,72 +1189,63 @@ async def get_market_trends():
     alerts = []
     
     try:
-        for keyword in keywords:
+        for keyword in keywords[:4]:  # Limit to 4 keywords to avoid timeout
             # Google News RSS URL
             rss_url = f"https://news.google.com/rss/search?q={keyword.replace(' ', '+')}&hl=en-IN&gl=IN&ceid=IN:en"
             
-            feed = feedparser.parse(rss_url)
-            
-            for entry in feed.entries[:3]:  # Get top 3 per keyword
-                news_item = {
-                    "title": entry.get("title", ""),
-                    "link": entry.get("link", ""),
-                    "published": entry.get("published", ""),
-                    "keyword": keyword,
-                    "source": entry.get("source", {}).get("title", "Google News") if hasattr(entry, "source") else "Google News"
-                }
-                all_news.append(news_item)
+            try:
+                feed = feedparser.parse(rss_url)
                 
-                # Generate alerts based on news
-                title_lower = news_item["title"].lower()
-                
-                # LPG price alerts
-                if "lpg" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower):
-                    alerts.append({
-                        "type": "market_trend",
-                        "trigger": "LPG Price Hike",
-                        "suggestion": "Stock up on Induction Cooktops and Air Fryers - customers will switch from gas!",
-                        "products": ["Induction Cooktop", "Air Fryer", "Electric Kettle", "Microwave"],
-                        "priority": "high",
-                        "news_title": news_item["title"],
-                        "action_required": True
-                    })
-                
-                # Copper price alerts
-                if "copper" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower or "high" in title_lower):
-                    alerts.append({
-                        "type": "market_trend",
-                        "trigger": "Copper Price Hike",
-                        "suggestion": "Stock up ACs NOW before prices increase - copper is major AC component!",
-                        "products": ["Air Conditioner", "Refrigerator", "Washing Machine"],
-                        "priority": "high",
-                        "news_title": news_item["title"],
-                        "action_required": True
-                    })
-                
-                # Electricity tariff alerts
-                if "electricity" in title_lower and ("tariff" in title_lower or "rate" in title_lower or "hike" in title_lower):
-                    alerts.append({
-                        "type": "market_trend",
-                        "trigger": "Electricity Rate Change",
-                        "suggestion": "Promote energy-efficient appliances with 5-star rating!",
-                        "products": ["Inverter AC", "LED TV", "Inverter Refrigerator"],
-                        "priority": "medium",
-                        "news_title": news_item["title"],
-                        "action_required": True
-                    })
-                
-                # Sale/discount news
-                if "sale" in title_lower or "discount" in title_lower or "offer" in title_lower:
-                    alerts.append({
-                        "type": "market_trend",
-                        "trigger": "Competitor Sales Active",
-                        "suggestion": "Consider running promotional offers to stay competitive!",
-                        "products": [],
-                        "priority": "medium",
-                        "news_title": news_item["title"],
-                        "action_required": False
-                    })
+                for entry in feed.entries[:2]:  # Get top 2 per keyword
+                    news_item = {
+                        "title": str(entry.get("title", "")),
+                        "link": str(entry.get("link", "")),
+                        "published": str(entry.get("published", "")),
+                        "keyword": keyword,
+                    }
+                    all_news.append(news_item)
+                    
+                    # Generate alerts based on news
+                    title_lower = news_item["title"].lower()
+                    
+                    # LPG price alerts
+                    if "lpg" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower):
+                        alerts.append({
+                            "type": "market_trend",
+                            "trigger": "LPG Price Hike",
+                            "suggestion": "Stock up on Induction Cooktops and Air Fryers - customers will switch from gas!",
+                            "products": ["Induction Cooktop", "Air Fryer", "Electric Kettle", "Microwave"],
+                            "priority": "high",
+                            "news_title": news_item["title"],
+                            "action_required": True
+                        })
+                    
+                    # Copper price alerts
+                    if "copper" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower or "high" in title_lower):
+                        alerts.append({
+                            "type": "market_trend",
+                            "trigger": "Copper Price Hike",
+                            "suggestion": "Stock up ACs NOW before prices increase - copper is major AC component!",
+                            "products": ["Air Conditioner", "Refrigerator", "Washing Machine"],
+                            "priority": "high",
+                            "news_title": news_item["title"],
+                            "action_required": True
+                        })
+                    
+                    # Electricity tariff alerts
+                    if "electricity" in title_lower and ("tariff" in title_lower or "rate" in title_lower or "hike" in title_lower):
+                        alerts.append({
+                            "type": "market_trend",
+                            "trigger": "Electricity Rate Change",
+                            "suggestion": "Promote energy-efficient appliances with 5-star rating!",
+                            "products": ["Inverter AC", "LED TV", "Inverter Refrigerator"],
+                            "priority": "medium",
+                            "news_title": news_item["title"],
+                            "action_required": True
+                        })
+            except Exception as feed_error:
+                logging.error(f"Feed parse error for {keyword}: {str(feed_error)}")
+                continue
         
         # Remove duplicate alerts
         seen_triggers = set()
