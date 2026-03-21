@@ -1528,18 +1528,26 @@ async def jarvis_execute_command(input: JarvisCommand):
     
     # Get conversation history for context
     conversation = await db.jarvis_conversations.find_one({"session_id": session_id})
-    conversation_history = conversation.get("messages", [])[-10:] if conversation else []  # Last 10 messages
+    conversation_history = conversation.get("messages", [])[-10:] if conversation else []
+    
+    # Get LIVE WEATHER
+    weather_data = await get_weather()
+    weather_temp = weather_data.get("temperature", 25)
+    weather_condition = weather_data.get("condition", "Clear")
+    weather_location = weather_data.get("location", "Punjab")
     
     # Get current store data for context
     products = await db.products.find().to_list(100)
     leads = await db.leads.find().sort("created_at", -1).limit(20).to_list(20)
     complaints = await db.complaints.find().sort("created_at", -1).limit(20).to_list(20)
+    customers = await db.customers.find().to_list(100)
     
     # Get stats
     total_customers = await db.customers.count_documents({})
     total_leads = await db.leads.count_documents({})
     new_leads = await db.leads.count_documents({"status": "New"})
     pending_complaints = await db.complaints.count_documents({"status": "Pending"})
+    pending_marketing = await db.marketing_suggestions.count_documents({"status": "pending_approval"})
     
     products_info = "\n".join([
         f"• {p.get('name')} ({p.get('brand')}) - Base: ₹{p.get('base_price')}, Min: ₹{p.get('min_price')}, ID: {p.get('id')}"
