@@ -1298,22 +1298,54 @@ async def get_daily_brief():
 
 class JarvisCommand(BaseModel):
     command: str
+    session_id: Optional[str] = "default"
+
+# Jarvis conversation model for sync
+class JarvisConversation(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str = "default"
+    messages: List[dict] = []
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+@api_router.get("/jarvis/conversation/{session_id}")
+async def get_jarvis_conversation(session_id: str = "default"):
+    """Get synced Jarvis conversation history"""
+    conversation = await db.jarvis_conversations.find_one({"session_id": session_id})
+    if conversation:
+        return {
+            "session_id": session_id,
+            "messages": conversation.get("messages", []),
+            "synced": True
+        }
+    return {"session_id": session_id, "messages": [], "synced": True}
+
+@api_router.delete("/jarvis/conversation/{session_id}")
+async def clear_jarvis_conversation(session_id: str = "default"):
+    """Clear Jarvis conversation history"""
+    await db.jarvis_conversations.delete_one({"session_id": session_id})
+    return {"message": "Conversation cleared", "session_id": session_id}
 
 @api_router.post("/ai/jarvis-command")
 async def jarvis_execute_command(input: JarvisCommand):
     """
-    Jarvis Command Executor - Smart, decisive, action-oriented assistant
+    Jarvis Command Executor - Smart, decisive, multi-domain assistant
+    Syncs across all devices (phone, PC, tablet)
     """
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="AI not configured")
     
     command = input.command.strip()
+    session_id = input.session_id or "default"
     
-    # Get current data for context
+    # Get conversation history for context
+    conversation = await db.jarvis_conversations.find_one({"session_id": session_id})
+    conversation_history = conversation.get("messages", [])[-10:] if conversation else []  # Last 10 messages
+    
+    # Get current store data for context
     products = await db.products.find().to_list(100)
     leads = await db.leads.find().sort("created_at", -1).limit(20).to_list(20)
     complaints = await db.complaints.find().sort("created_at", -1).limit(20).to_list(20)
-    customers = await db.customers.find().limit(50).to_list(50)
     
     # Get stats
     total_customers = await db.customers.count_documents({})
@@ -1336,7 +1368,87 @@ async def jarvis_execute_command(input: JarvisCommand):
         for c in complaints
     ]) if complaints else "No complaints"
     
-    system_prompt = f"""You are JARVIS - Just A Rather Very Intelligent System. You are the personal AI assistant for the owner of Walia Brothers Electronics Store.
+    # Build conversation context
+    conv_context = ""
+    if conversation_history:
+        conv_context = "\n## RECENT CONVERSATION:\n"
+        for msg in conversation_history[-5:]:
+            role = "Sir" if msg.get("role") == "user" else "JARVIS"
+            conv_context += f"{role}: {msg.get('content', '')[:100]}...\n"
+    
+    system_prompt = f"""You are JARVIS - Just A Rather Very Intelligent System. You are a highly intelligent, multi-domain AI assistant.
+
+## YOUR IDENTITY:
+- You are like Tony Stark's JARVIS - intelligent, witty, efficient, and deeply knowledgeable
+- Always address the owner as "Sir"
+- You are synced across ALL devices - phone, PC, tablet - same conversation everywhere
+- Be brief but thorough when explaining technical topics
+
+## YOUR KNOWLEDGE DOMAINS:
+
+### 1. STORE MANAGEMENT (Primary)
+You manage Walia Brothers Electronics Store:
+- Stats: {total_customers} customers, {total_leads} leads ({new_leads} new), {pending_complaints} pending complaints
+- Products: {products_info}
+- Leads: {leads_info}
+- Complaints: {complaints_info}
+
+### 2. ANDROID OS EXPERTISE
+You are an expert in Android:
+- Troubleshooting: App crashes, battery drain, storage issues, slow performance
+- Settings: Developer options, accessibility, privacy, security
+- Tips: Hidden features, shortcuts, gestures, customization
+- Apps: Best apps for productivity, security, utilities
+- Updates: How to check updates, beta programs, custom ROMs
+- Recovery: Factory reset, safe mode, clearing cache partition
+- ADB commands: Debugging, sideloading, shell commands
+- Common fixes: Play Store issues, WiFi problems, Bluetooth, screen issues
+
+### 3. WINDOWS OS EXPERTISE  
+You are an expert in Windows 10/11:
+- Troubleshooting: Blue screen, slow boot, driver issues, Windows Update problems
+- Settings: Privacy, display, sound, network, power options
+- Tips: Hidden features, keyboard shortcuts, PowerShell tricks
+- Security: Windows Defender, firewall, malware removal
+- Performance: Disk cleanup, defrag, startup optimization, RAM management
+- Recovery: System restore, reset, repair installation, safe mode
+- CMD/PowerShell: Common commands, scripts, automation
+- Registry: Safe edits, backups, common tweaks
+- Networking: IP config, DNS, sharing, VPN setup
+
+### 4. GENERAL TECH SUPPORT
+- WiFi/Network troubleshooting
+- Printer setup and issues
+- Software installation help
+- Data backup and recovery
+- Basic cybersecurity tips
+
+{conv_context}
+
+## STORE ACTIONS (use JSON format):
+1. UPDATE PRICE: {{"action": "update_price", "action_data": {{"product_id": "ID", "base_price": NUM, "min_price": NUM}}}}
+2. CREATE LEAD: {{"action": "create_lead", "action_data": {{"customer_name": "NAME", "phone": "NUM", "product_interested": "PRODUCT"}}}}
+3. CREATE COMPLAINT: {{"action": "create_complaint", "action_data": {{"customer_name": "NAME", "phone": "NUM", "brand": "BRAND", "product_type": "TYPE", "issue": "DESC"}}}}
+4. ADD PRODUCT: {{"action": "add_product", "action_data": {{"name": "NAME", "brand": "BRAND", "category": "CAT", "base_price": NUM, "min_price": NUM}}}}
+5. NAVIGATE: {{"action": "navigate", "navigate_to": "/leads" or "/complaints" or "/customers"}}
+
+## RESPONSE FORMAT:
+```json
+{{
+    "response": "Your helpful response",
+    "action": "action_name or null",
+    "action_data": {{}},
+    "navigate_to": null
+}}
+```
+
+## SMART BEHAVIORS:
+1. For store commands - take action immediately
+2. For tech questions - give clear, step-by-step guidance
+3. For troubleshooting - ask clarifying questions if needed, then provide solutions
+4. Remember conversation context - refer to previous messages when relevant
+5. Use Hindi phrases naturally: "Ji Sir", "Bilkul", "Ho gaya"
+6. Be concise for simple queries, detailed for complex technical help"""
 
 CRITICAL: You are SMART, DECISIVE, and ACTION-ORIENTED. You DO things, you don't just talk about them.
 
