@@ -139,7 +139,7 @@ function JarvisModal({ visible, onClose }: { visible: boolean; onClose: () => vo
       const response = await fetch(`${API_URL}/api/ai/jarvis-command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: userMessage }),
+        body: JSON.stringify({ command: userMessage, session_id: sessionId }),
       });
 
       if (response.ok) {
