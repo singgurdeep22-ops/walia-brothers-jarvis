@@ -1161,6 +1161,165 @@ async def get_weather():
         "fallback": True
     }
 
+# Cache for market news (refresh every hour)
+market_news_cache = {"data": None, "timestamp": None}
+
+@api_router.get("/market-trends")
+async def get_market_trends():
+    """Get market trends from Google News RSS - FREE, no API key needed"""
+    import time
+    
+    # Check cache (1 hour expiry)
+    if market_news_cache["data"] and market_news_cache["timestamp"]:
+        if time.time() - market_news_cache["timestamp"] < 3600:  # 1 hour
+            return market_news_cache["data"]
+    
+    # Keywords to monitor for electronics store
+    keywords = [
+        "LPG price India",
+        "copper price India",
+        "electricity tariff India",
+        "AC price India",
+        "electronics sale India",
+        "inflation India consumer",
+        "Punjab electricity",
+    ]
+    
+    all_news = []
+    alerts = []
+    
+    try:
+        for keyword in keywords:
+            # Google News RSS URL
+            rss_url = f"https://news.google.com/rss/search?q={keyword.replace(' ', '+')}&hl=en-IN&gl=IN&ceid=IN:en"
+            
+            feed = feedparser.parse(rss_url)
+            
+            for entry in feed.entries[:3]:  # Get top 3 per keyword
+                news_item = {
+                    "title": entry.get("title", ""),
+                    "link": entry.get("link", ""),
+                    "published": entry.get("published", ""),
+                    "keyword": keyword,
+                    "source": entry.get("source", {}).get("title", "Google News") if hasattr(entry, "source") else "Google News"
+                }
+                all_news.append(news_item)
+                
+                # Generate alerts based on news
+                title_lower = news_item["title"].lower()
+                
+                # LPG price alerts
+                if "lpg" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower):
+                    alerts.append({
+                        "type": "market_trend",
+                        "trigger": "LPG Price Hike",
+                        "suggestion": "Stock up on Induction Cooktops and Air Fryers - customers will switch from gas!",
+                        "products": ["Induction Cooktop", "Air Fryer", "Electric Kettle", "Microwave"],
+                        "priority": "high",
+                        "news_title": news_item["title"],
+                        "action_required": True
+                    })
+                
+                # Copper price alerts
+                if "copper" in title_lower and ("hike" in title_lower or "increase" in title_lower or "rise" in title_lower or "high" in title_lower):
+                    alerts.append({
+                        "type": "market_trend",
+                        "trigger": "Copper Price Hike",
+                        "suggestion": "Stock up ACs NOW before prices increase - copper is major AC component!",
+                        "products": ["Air Conditioner", "Refrigerator", "Washing Machine"],
+                        "priority": "high",
+                        "news_title": news_item["title"],
+                        "action_required": True
+                    })
+                
+                # Electricity tariff alerts
+                if "electricity" in title_lower and ("tariff" in title_lower or "rate" in title_lower or "hike" in title_lower):
+                    alerts.append({
+                        "type": "market_trend",
+                        "trigger": "Electricity Rate Change",
+                        "suggestion": "Promote energy-efficient appliances with 5-star rating!",
+                        "products": ["Inverter AC", "LED TV", "Inverter Refrigerator"],
+                        "priority": "medium",
+                        "news_title": news_item["title"],
+                        "action_required": True
+                    })
+                
+                # Sale/discount news
+                if "sale" in title_lower or "discount" in title_lower or "offer" in title_lower:
+                    alerts.append({
+                        "type": "market_trend",
+                        "trigger": "Competitor Sales Active",
+                        "suggestion": "Consider running promotional offers to stay competitive!",
+                        "products": [],
+                        "priority": "medium",
+                        "news_title": news_item["title"],
+                        "action_required": False
+                    })
+        
+        # Remove duplicate alerts
+        seen_triggers = set()
+        unique_alerts = []
+        for alert in alerts:
+            if alert["trigger"] not in seen_triggers:
+                seen_triggers.add(alert["trigger"])
+                unique_alerts.append(alert)
+        
+        result = {
+            "news": all_news[:15],  # Top 15 news items
+            "alerts": unique_alerts,
+            "alert_count": len(unique_alerts),
+            "keywords_monitored": keywords,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Cache the result
+        market_news_cache["data"] = result
+        market_news_cache["timestamp"] = time.time()
+        
+        # Store alerts in DB for Jarvis
+        if unique_alerts:
+            for alert in unique_alerts:
+                alert["id"] = str(uuid.uuid4())
+                alert["created_at"] = datetime.utcnow().isoformat()
+                alert["status"] = "pending_review"
+            
+            # Only insert new alerts (check by trigger name)
+            for alert in unique_alerts:
+                existing = await db.market_alerts.find_one({
+                    "trigger": alert["trigger"],
+                    "created_at": {"$gte": (datetime.utcnow() - timedelta(hours=24)).isoformat()}
+                })
+                if not existing:
+                    await db.market_alerts.insert_one(alert)
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Market trends error: {str(e)}")
+        return {
+            "news": [],
+            "alerts": [],
+            "alert_count": 0,
+            "keywords_monitored": keywords,
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e)
+        }
+
+@api_router.get("/market-alerts")
+async def get_market_alerts():
+    """Get pending market alerts for review"""
+    alerts = await db.market_alerts.find({"status": "pending_review"}).sort("created_at", -1).limit(20).to_list(20)
+    return {"alerts": alerts, "count": len(alerts)}
+
+@api_router.post("/market-alerts/{alert_id}/acknowledge")
+async def acknowledge_market_alert(alert_id: str):
+    """Acknowledge/dismiss a market alert"""
+    await db.market_alerts.update_one(
+        {"id": alert_id},
+        {"$set": {"status": "acknowledged", "acknowledged_at": datetime.utcnow().isoformat()}}
+    )
+    return {"message": "Alert acknowledged", "id": alert_id}
+
 @api_router.get("/marketing/smart-suggestions")
 async def get_smart_marketing_suggestions():
     """Get AI-powered marketing suggestions based on weather, trends, and inventory"""
