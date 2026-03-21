@@ -126,7 +126,15 @@ export default function DashboardScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerLeft}>
+          {/* Weather Widget */}
+          {weather && (
+            <View style={styles.weatherWidget}>
+              <Ionicons name={getWeatherIcon(weather.condition)} size={20} color="#FFD700" />
+              <Text style={styles.weatherTemp}>{Math.round(weather.temperature)}°C</Text>
+              <Text style={styles.weatherCondition}>{weather.condition}</Text>
+            </View>
+          )}
           <Text style={styles.greeting}>Welcome to</Text>
           <Text style={styles.storeName}>Walia Brothers</Text>
         </View>
