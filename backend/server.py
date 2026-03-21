@@ -1309,6 +1309,10 @@ async def get_market_trends():
 async def get_market_alerts():
     """Get pending market alerts for review"""
     alerts = await db.market_alerts.find({"status": "pending_review"}).sort("created_at", -1).limit(20).to_list(20)
+    # Convert ObjectId to string
+    for alert in alerts:
+        if "_id" in alert:
+            alert["_id"] = str(alert["_id"])
     return {"alerts": alerts, "count": len(alerts)}
 
 @api_router.post("/market-alerts/{alert_id}/acknowledge")
